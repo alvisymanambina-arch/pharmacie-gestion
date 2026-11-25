@@ -1,0 +1,6 @@
+.env
+target/
+
+# Local Maven cache and credentials
+.mvn/repository/
+.mvn/settings.xml

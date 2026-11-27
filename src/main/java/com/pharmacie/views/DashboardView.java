@@ -5,6 +5,7 @@ import com.pharmacie.dao.VenteDAO;
 import com.pharmacie.models.Medicament;
 import com.pharmacie.utils.DateUtils;
 import com.pharmacie.utils.FormatUtils;
+import com.pharmacie.utils.TableUi;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableCellRenderer;
@@ -72,7 +73,7 @@ public final class DashboardView extends JPanel {
             }
         };
         alertTable = new JTable(alertTableModel);
-        alertTable.setRowHeight(28);
+        TableUi.apply(alertTable);
         alertTable.setFont(new Font("Segoe UI", Font.PLAIN, 13));
         alertTable.getTableHeader().setFont(new Font("Segoe UI", Font.BOLD, 13));
         alertTable.setFillsViewportHeight(true);
@@ -163,7 +164,8 @@ public final class DashboardView extends JPanel {
                 try {
                     // Total medicaments
                     List<Medicament> allMeds = medicamentDAO.findAll();
-                    int totalCount = allMeds.size();
+                    int totalCount = (int) allMeds.stream()
+                            .filter(m -> m.getQuantiteStock() > 0).count();
 
                     // Low stock alerts
                     List<Medicament> lowStock = medicamentDAO.findStockFaible();
@@ -188,8 +190,9 @@ public final class DashboardView extends JPanel {
 
                     final int finalTotal = totalCount;
                     final int finalAlerteCount = alerteMedicaments.size();
-                    final String finalCA = FormatUtils.formatCurrency(ca);
-                    final String finalVenteCount = FormatUtils.formatNumber(venteCount);
+                    final String finalCA = ca == null ? "Erreur" : FormatUtils.formatCurrency(ca);
+                    final String finalVenteCount = venteCount < 0
+                            ? "Erreur" : FormatUtils.formatNumber(venteCount);
 
                     SwingUtilities.invokeLater(() -> {
                         lblMedicamentsCount.setText(String.valueOf(finalTotal));
@@ -201,6 +204,13 @@ public final class DashboardView extends JPanel {
                     });
                 } catch (Exception e) {
                     System.err.println("[DashboardView] Error loading data: " + e.getMessage());
+                    SwingUtilities.invokeLater(() -> {
+                        lblMedicamentsCount.setText("Erreur");
+                        lblAlertesCount.setText("Erreur");
+                        lblChiffreAffaires.setText("Erreur");
+                        lblVentesCount.setText("Erreur");
+                        alertTableModel.setRowCount(0);
+                    });
                 }
                 return null;
             }

@@ -1,21 +1,46 @@
 package com.pharmacie.views;
 
+import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.FlowLayout;
+import java.awt.Font;
+import java.awt.Frame;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
+import java.awt.Insets;
+import java.util.List;
+import java.util.concurrent.ExecutionException;
+
+import javax.swing.BorderFactory;
+import javax.swing.JButton;
+import javax.swing.JCheckBox;
+import javax.swing.JComboBox;
+import javax.swing.JComponent;
+import javax.swing.JDialog;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.JPasswordField;
+import javax.swing.JScrollPane;
+import javax.swing.JTable;
+import javax.swing.JTextField;
+import javax.swing.SwingUtilities;
+import javax.swing.SwingWorker;
+import javax.swing.table.DefaultTableModel;
+
+import org.mindrot.jbcrypt.BCrypt;
+
 import com.pharmacie.config.AppConstants;
 import com.pharmacie.dao.UtilisateurDAO;
 import com.pharmacie.models.Utilisateur;
 import com.pharmacie.utils.DateUtils;
 import com.pharmacie.utils.DialogUtils;
-import org.mindrot.jbcrypt.BCrypt;
-
-import javax.swing.*;
-import javax.swing.table.DefaultTableModel;
-import java.awt.*;
-import java.util.List;
+import com.pharmacie.utils.TableUi;
+import com.pharmacie.utils.FormValidation;
 
 public class UtilisateurView extends JPanel {
 
-    private MainFrame mainFrame;
-    private UtilisateurDAO utilisateurDAO;
+    private final MainFrame mainFrame;
+    private final UtilisateurDAO utilisateurDAO;
 
     private JTable tblUtilisateurs;
     private DefaultTableModel model;
@@ -38,7 +63,9 @@ public class UtilisateurView extends JPanel {
             public boolean isCellEditable(int row, int column) { return false; }
         };
         tblUtilisateurs = new JTable(model);
-        tblUtilisateurs.setRowHeight(26);
+        TableUi.apply(tblUtilisateurs);
+        tblUtilisateurs.setAutoCreateRowSorter(true);
+        tblUtilisateurs.setAutoCreateRowSorter(true);
         tblUtilisateurs.getColumnModel().getColumn(0).setMaxWidth(50);
     }
 
@@ -102,7 +129,7 @@ public class UtilisateurView extends JPanel {
                                 DateUtils.formatDateTime(u.getDateCreation())
                         });
                     }
-                } catch (Exception e) {
+                } catch (InterruptedException | ExecutionException e) {
                     DialogUtils.showErrorMessage(e, "Erreur");
                 }
             }
@@ -116,11 +143,27 @@ public class UtilisateurView extends JPanel {
             DialogUtils.showWarning("Veuillez sélectionner un utilisateur.");
             return;
         }
+        row = tblUtilisateurs.convertRowIndexToModel(row);
         int id = (int) model.getValueAt(row, 0);
-        Utilisateur u = utilisateurDAO.findById(id);
-        if (u != null) {
-            ouvrirDialog(u);
-        }
+        new SwingWorker<Utilisateur, Void>() {
+            @Override
+            protected Utilisateur doInBackground() {
+                return utilisateurDAO.findById(id);
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    Utilisateur utilisateur = get();
+                    if (utilisateur != null) ouvrirDialog(utilisateur);
+                    else DialogUtils.showError("Utilisateur introuvable.");
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } catch (ExecutionException e) {
+                    DialogUtils.showErrorMessage(e, "Erreur de chargement de l'utilisateur");
+                }
+            }
+        }.execute();
     }
 
     private void supprimer() {
@@ -129,6 +172,7 @@ public class UtilisateurView extends JPanel {
             DialogUtils.showWarning("Veuillez sélectionner un utilisateur.");
             return;
         }
+        row = tblUtilisateurs.convertRowIndexToModel(row);
         int id = (int) model.getValueAt(row, 0);
         String nom = model.getValueAt(row, 1) + " " + model.getValueAt(row, 2);
         if (id == mainFrame.getUtilisateur().getId()) {
@@ -152,7 +196,7 @@ public class UtilisateurView extends JPanel {
                         } else {
                             DialogUtils.showError("Impossible de supprimer cet utilisateur.");
                         }
-                    } catch (Exception e) {
+                    } catch (InterruptedException | ExecutionException e) {
                         DialogUtils.showErrorMessage(e, "Erreur");
                     }
                 }
@@ -175,6 +219,7 @@ public class UtilisateurView extends JPanel {
 
         private boolean confirmed = false;
         private int editingId = 0;
+        private JButton btnOK;
         private JTextField txtNom, txtPrenom, txtUsername;
         private JPasswordField txtPassword;
         private PasswordFieldPanel passwordPanel;
@@ -230,7 +275,7 @@ public class UtilisateurView extends JPanel {
             gbc.gridx = 0; gbc.gridy = y; gbc.gridwidth = 2;
             gbc.anchor = GridBagConstraints.CENTER;
             JPanel panelBtn = new JPanel(new FlowLayout(FlowLayout.CENTER, 20, 5));
-            JButton btnOK = new JButton("Enregistrer");
+            btnOK = new JButton("Enregistrer");
             btnOK.setBackground(new Color(76, 175, 80));
             btnOK.setForeground(Color.WHITE);
             JButton btnCancel = new JButton("Annuler");
@@ -252,13 +297,31 @@ public class UtilisateurView extends JPanel {
         }
 
         private void onOK() {
+            FormValidation.clear(txtNom, txtPrenom, txtUsername, txtPassword, cmbRole);
             if (txtNom.getText().trim().isEmpty() || txtPrenom.getText().trim().isEmpty()
                     || txtUsername.getText().trim().isEmpty()) {
-                DialogUtils.showWarning("Nom, prénom et nom d'utilisateur sont obligatoires.");
+                JComponent missing = txtNom.getText().trim().isEmpty() ? txtNom
+                        : txtPrenom.getText().trim().isEmpty() ? txtPrenom : txtUsername;
+                FormValidation.invalid(missing, "Nom, prénom et nom d'utilisateur sont obligatoires.");
                 return;
             }
-            if (editingId == 0 && txtPassword.getPassword().length == 0) {
-                DialogUtils.showWarning("Le mot de passe est obligatoire.");
+            if (txtNom.getText().trim().length() > 100 || txtPrenom.getText().trim().length() > 100) {
+                JComponent tooLong = txtNom.getText().trim().length() > 100 ? txtNom : txtPrenom;
+                FormValidation.invalid(tooLong, "Le nom et le prénom sont limités à 100 caractères.");
+                return;
+            }
+            if (!txtUsername.getText().trim().matches("[A-Za-z0-9._-]{3,50}")) {
+                FormValidation.invalid(txtUsername,
+                        "Le nom d'utilisateur doit faire 3 à 50 caractères (lettres, chiffres, point, tiret ou souligné).");
+                return;
+            }
+            char[] passwordChars = txtPassword.getPassword();
+            if (editingId == 0 && passwordChars.length == 0) {
+                FormValidation.invalid(txtPassword, "Le mot de passe est obligatoire.");
+                return;
+            }
+            if (passwordChars.length > 0 && passwordChars.length < 8) {
+                FormValidation.invalid(txtPassword, "Le mot de passe doit contenir au moins 8 caractères.");
                 return;
             }
 
@@ -269,35 +332,45 @@ public class UtilisateurView extends JPanel {
             u.setRole((String) cmbRole.getSelectedItem());
             u.setActif(chkActif.isSelected());
 
-            String password = new String(txtPassword.getPassword());
+            String password = new String(passwordChars);
+            java.util.Arrays.fill(passwordChars, '\0');
             if (!password.isEmpty()) {
                 u.setPassword(BCrypt.hashpw(password, BCrypt.gensalt()));
             }
 
-            boolean success;
+            boolean withPassword = !password.isEmpty();
             if (editingId > 0) {
                 u.setId(editingId);
-                // Un champ vide conserve le mot de passe actuel.
-                if (password.isEmpty()) {
-                    Utilisateur existing = utilisateurDAO.findById(editingId);
-                    if (existing != null) {
-                        u.setPassword(existing.getPassword());
-                    }
-                    success = utilisateurDAO.update(u);
-                } else {
-                    success = utilisateurDAO.updateWithPassword(u);
+            }
+            btnOK.setEnabled(false);
+            new SwingWorker<Boolean, Void>() {
+                @Override
+                protected Boolean doInBackground() {
+                    if (editingId == 0) return utilisateurDAO.insert(u);
+                    return withPassword
+                            ? utilisateurDAO.updateWithPassword(u)
+                            : utilisateurDAO.update(u);
                 }
-            } else {
-                success = utilisateurDAO.insert(u);
-            }
 
-            if (success) {
-                confirmed = true;
-                dispose();
-            } else {
-                DialogUtils.showError("Erreur lors de l'enregistrement. "
-                        + "Ce nom d'utilisateur existe peut-être déjà.");
-            }
+                @Override
+                protected void done() {
+                    btnOK.setEnabled(true);
+                    try {
+                        if (get()) {
+                            confirmed = true;
+                            dispose();
+                        } else {
+                            DialogUtils.showError("Erreur lors de l'enregistrement. "
+                                    + "Ce nom d'utilisateur existe peut-être déjà.");
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        DialogUtils.showError("Enregistrement interrompu.");
+                    } catch (ExecutionException e) {
+                        DialogUtils.showErrorMessage(e, "Erreur lors de l'enregistrement");
+                    }
+                }
+            }.execute();
         }
 
         public boolean isConfirmed() { return confirmed; }

@@ -50,6 +50,7 @@ public class CategorieDAO implements BaseDAO<Categorie> {
         } catch (SQLException e) {
             System.err.println("[CategorieDAO] Error finding all categories: " + e.getMessage());
             e.printStackTrace();
+            throw new IllegalStateException("Impossible de charger les catégories depuis la base.", e);
         }
         return categories;
     }

@@ -10,7 +10,6 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -46,7 +45,7 @@ public class ApprovisionnementDAO {
                 statement.setInt(2, approvisionnement.getUtilisateurId());
                 LocalDateTime dateAppro = approvisionnement.getDateAppro() != null
                         ? approvisionnement.getDateAppro() : LocalDateTime.now();
-                statement.setTimestamp(3, Timestamp.valueOf(dateAppro));
+                statement.setObject(3, dateAppro);
                 statement.setBigDecimal(4, approvisionnement.getMontantTotal());
                 statement.executeUpdate();
 
@@ -128,7 +127,6 @@ public class ApprovisionnementDAO {
         } finally {
             if (connection != null) {
                 try {
-                    connection.setAutoCommit(true);
                     connection.close();
                 } catch (SQLException e) {
                     System.err.println("[ApprovisionnementDAO] Erreur fermeture: " + e.getMessage());
@@ -156,7 +154,7 @@ public class ApprovisionnementDAO {
                     || detail.getPrixAchat().compareTo(BigDecimal.ZERO) < 0
                     || detail.getNumeroLot() == null || detail.getNumeroLot().isBlank()
                     || detail.getDateExpiration() == null
-                    || !detail.getDateExpiration().isAfter(LocalDate.now())) {
+                    || detail.getDateExpiration().isBefore(LocalDate.now())) {
                 throw new SQLException("Détail d'approvisionnement invalide.");
             }
             BigDecimal sousTotal = detail.getPrixAchat()
@@ -184,6 +182,7 @@ public class ApprovisionnementDAO {
         } catch (SQLException e) {
             System.err.println("[ApprovisionnementDAO] Error findAll: " + e.getMessage());
             e.printStackTrace();
+            throw new IllegalStateException("Impossible de charger les approvisionnements depuis la base.", e);
         }
         return approvisionnements;
     }
@@ -207,6 +206,7 @@ public class ApprovisionnementDAO {
         } catch (SQLException e) {
             System.err.println("[ApprovisionnementDAO] Error findByFournisseur: " + e.getMessage());
             e.printStackTrace();
+            throw new IllegalStateException("Impossible de charger les approvisionnements du fournisseur.", e);
         }
         return approvisionnements;
     }
@@ -216,22 +216,22 @@ public class ApprovisionnementDAO {
         String sql = "SELECT a.*, f.nom AS fournisseur_nom "
                 + "FROM approvisionnements a "
                 + "LEFT JOIN fournisseurs f ON a.fournisseur_id = f.id "
-                + "WHERE a.date_appro BETWEEN ? AND ? "
+                + "WHERE a.date_appro >= ? AND a.date_appro < ? "
                 + "ORDER BY a.date_appro DESC";
         try (Connection connection = databaseConfig.getConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setTimestamp(1, Timestamp.valueOf(debut.atStartOfDay()));
-            statement.setTimestamp(2, Timestamp.valueOf(fin.atTime(23, 59, 59)));
+            statement.setObject(1, debut.atStartOfDay());
+            statement.setObject(2, fin.plusDays(1).atStartOfDay());
             try (ResultSet resultSet = statement.executeQuery()) {
                 while (resultSet.next()) {
                     Approvisionnement appro = mapResultSetToApprovisionnement(resultSet);
-                    appro.setDetails(findDetailsByApprovisionnementId(appro.getId()));
                     approvisionnements.add(appro);
                 }
             }
         } catch (SQLException e) {
             System.err.println("[ApprovisionnementDAO] Error findByDateRange: " + e.getMessage());
             e.printStackTrace();
+            throw new IllegalStateException("Impossible de charger les approvisionnements pour cette période.", e);
         }
         return approvisionnements;
     }
@@ -259,10 +259,7 @@ public class ApprovisionnementDAO {
     private Approvisionnement mapResultSetToApprovisionnement(ResultSet resultSet) throws SQLException {
         Approvisionnement appro = new Approvisionnement();
         appro.setId(resultSet.getInt("id"));
-        Timestamp ts = resultSet.getTimestamp("date_appro");
-        if (ts != null) {
-            appro.setDateAppro(ts.toLocalDateTime());
-        }
+        appro.setDateAppro(resultSet.getObject("date_appro", LocalDateTime.class));
         appro.setFournisseurId(resultSet.getInt("fournisseur_id"));
         appro.setUtilisateurId(resultSet.getInt("utilisateur_id"));
         appro.setMontantTotal(resultSet.getBigDecimal("montant_total"));

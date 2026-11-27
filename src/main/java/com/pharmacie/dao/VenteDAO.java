@@ -10,7 +10,6 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -43,7 +42,7 @@ public class VenteDAO {
                     sqlVente, Statement.RETURN_GENERATED_KEYS)) {
                 LocalDateTime dateVente = vente.getDateVente() != null
                         ? vente.getDateVente() : LocalDateTime.now();
-                statement.setTimestamp(1, Timestamp.valueOf(dateVente));
+                statement.setObject(1, dateVente);
 
                 if (vente.getClientId() > 0) {
                     statement.setInt(2, vente.getClientId());
@@ -142,7 +141,6 @@ public class VenteDAO {
         } finally {
             if (connection != null) {
                 try {
-                    connection.setAutoCommit(true);
                     connection.close();
                 } catch (SQLException e) {
                     System.err.println("[VenteDAO] Erreur fermeture: " + e.getMessage());
@@ -176,9 +174,9 @@ public class VenteDAO {
         }
 
         BigDecimal remise = vente.getRemise() == null ? BigDecimal.ZERO : vente.getRemise();
-        if (remise.compareTo(BigDecimal.ZERO) < 0
+        if (remise.scale() > 2 || remise.compareTo(BigDecimal.ZERO) < 0
                 || remise.compareTo(BigDecimal.valueOf(100)) > 0) {
-            throw new SQLException("La remise doit être comprise entre 0 et 100 %.");
+            throw new SQLException("La remise doit être comprise entre 0 et 100 % avec deux décimales maximum.");
         }
         vente.setRemise(remise);
         vente.setMontantTotal(total.multiply(BigDecimal.ONE.subtract(
@@ -201,6 +199,7 @@ public class VenteDAO {
         } catch (SQLException e) {
             System.err.println("[VenteDAO] Error findAll: " + e.getMessage());
             e.printStackTrace();
+            throw new IllegalStateException("Impossible de charger les ventes depuis la base.", e);
         }
         return ventes;
     }
@@ -210,22 +209,22 @@ public class VenteDAO {
         // Inclure toute la journée de fin
         String sql = "SELECT v.*, c.nom AS client_nom, c.prenom AS client_prenom "
                 + "FROM ventes v LEFT JOIN clients c ON v.client_id = c.id "
-                + "WHERE v.date_vente BETWEEN ? AND ? "
+                + "WHERE v.statut = 'VALIDEE' AND v.date_vente >= ? AND v.date_vente < ? "
                 + "ORDER BY v.date_vente DESC";
         try (Connection connection = databaseConfig.getConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setTimestamp(1, Timestamp.valueOf(debut.atStartOfDay()));
-            statement.setTimestamp(2, Timestamp.valueOf(fin.atTime(23, 59, 59)));
+            statement.setObject(1, debut.atStartOfDay());
+            statement.setObject(2, fin.plusDays(1).atStartOfDay());
             try (ResultSet resultSet = statement.executeQuery()) {
                 while (resultSet.next()) {
                     Vente vente = mapResultSetToVente(resultSet);
-                    vente.setDetails(findDetailsByVenteId(vente.getId()));
                     ventes.add(vente);
                 }
             }
         } catch (SQLException e) {
             System.err.println("[VenteDAO] Error findByDateRange: " + e.getMessage());
             e.printStackTrace();
+            throw new IllegalStateException("Impossible de charger les ventes pour cette période.", e);
         }
         return ventes;
     }
@@ -248,17 +247,18 @@ public class VenteDAO {
         } catch (SQLException e) {
             System.err.println("[VenteDAO] Error findByClient: " + e.getMessage());
             e.printStackTrace();
+            throw new IllegalStateException("Impossible de charger les ventes du client.", e);
         }
         return ventes;
     }
 
     public BigDecimal getChiffreAffairesJour(LocalDate date) {
         String sql = "SELECT COALESCE(SUM(montant_total), 0) FROM ventes "
-                + "WHERE date_vente >= ? AND date_vente < ?";
+                + "WHERE statut = 'VALIDEE' AND date_vente >= ? AND date_vente < ?";
         try (Connection connection = databaseConfig.getConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setTimestamp(1, Timestamp.valueOf(date.atStartOfDay()));
-            statement.setTimestamp(2, Timestamp.valueOf(date.plusDays(1).atStartOfDay()));
+            statement.setObject(1, date.atStartOfDay());
+            statement.setObject(2, date.plusDays(1).atStartOfDay());
             try (ResultSet resultSet = statement.executeQuery()) {
                 if (resultSet.next()) {
                     BigDecimal result = resultSet.getBigDecimal(1);
@@ -267,13 +267,15 @@ public class VenteDAO {
             }
         } catch (SQLException e) {
             System.err.println("[VenteDAO] Error getChiffreAffairesJour: " + e.getMessage());
+            e.printStackTrace();
+            return null;
         }
         return BigDecimal.ZERO;
     }
 
     public BigDecimal getChiffreAffairesMois(int mois, int annee) {
         String sql = "SELECT COALESCE(SUM(montant_total), 0) FROM ventes "
-                + "WHERE EXTRACT(MONTH FROM date_vente) = ? "
+                + "WHERE statut = 'VALIDEE' AND EXTRACT(MONTH FROM date_vente) = ? "
                 + "AND EXTRACT(YEAR FROM date_vente) = ?";
         try (Connection connection = databaseConfig.getConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -287,16 +289,18 @@ public class VenteDAO {
             }
         } catch (SQLException e) {
             System.err.println("[VenteDAO] Error getChiffreAffairesMois: " + e.getMessage());
+            return null;
         }
-        return BigDecimal.ZERO;
+        return null;
     }
 
     public int getNombreVentesJour(LocalDate date) {
-        String sql = "SELECT COUNT(*) FROM ventes WHERE date_vente >= ? AND date_vente < ?";
+        String sql = "SELECT COUNT(*) FROM ventes WHERE statut = 'VALIDEE' "
+                + "AND date_vente >= ? AND date_vente < ?";
         try (Connection connection = databaseConfig.getConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setTimestamp(1, Timestamp.valueOf(date.atStartOfDay()));
-            statement.setTimestamp(2, Timestamp.valueOf(date.plusDays(1).atStartOfDay()));
+            statement.setObject(1, date.atStartOfDay());
+            statement.setObject(2, date.plusDays(1).atStartOfDay());
             try (ResultSet resultSet = statement.executeQuery()) {
                 if (resultSet.next()) {
                     return resultSet.getInt(1);
@@ -304,6 +308,8 @@ public class VenteDAO {
             }
         } catch (SQLException e) {
             System.err.println("[VenteDAO] Error getNombreVentesJour: " + e.getMessage());
+            e.printStackTrace();
+            return -1;
         }
         return 0;
     }
@@ -330,10 +336,7 @@ public class VenteDAO {
     private Vente mapResultSetToVente(ResultSet resultSet) throws SQLException {
         Vente vente = new Vente();
         vente.setId(resultSet.getInt("id"));
-        Timestamp ts = resultSet.getTimestamp("date_vente");
-        if (ts != null) {
-            vente.setDateVente(ts.toLocalDateTime());
-        }
+        vente.setDateVente(resultSet.getObject("date_vente", LocalDateTime.class));
         int clientId = resultSet.getInt("client_id");
         vente.setClientId(resultSet.wasNull() ? 0 : clientId);
         vente.setUtilisateurId(resultSet.getInt("utilisateur_id"));

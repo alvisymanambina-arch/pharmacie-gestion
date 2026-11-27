@@ -1,6 +1,14 @@
 package com.pharmacie;
 
+import java.awt.BorderLayout;
+import java.util.concurrent.ExecutionException;
+
+import javax.swing.BorderFactory;
+import javax.swing.JFrame;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
+import javax.swing.SwingWorker;
 import javax.swing.UIManager;
 
 import com.formdev.flatlaf.FlatDarkLaf;
@@ -22,24 +30,50 @@ public class Main {
             System.err.println("Erreur lors du chargement du thème : " + e.getMessage());
         }
 
-        // Vérifier la connexion à la base de données
-        DatabaseConfig dbConfig = DatabaseConfig.getInstance();
-        if (!dbConfig.testConnection()) {
-            DialogUtils.showError(
-                    """
-                    Impossible de se connecter \u00e0 la base de donn\u00e9es.
-                    Veuillez v\u00e9rifier votre connexion PostgreSQL/Supabase et le sch\u00e9ma pharmacie.
-                    
-                    URL : """ + AppConstants.DB_URL + "\n" +
-                    "Utilisateur : " + AppConstants.DB_USER
-            );
-            System.exit(1);
-        }
+        SwingUtilities.invokeLater(Main::connectAndLaunch);
+    }
 
-        // Lancer l'application sur l'EDT
-        SwingUtilities.invokeLater(() -> {
-            LoginController loginController = new LoginController();
-            loginController.showLoginView();
-        });
+    private static void connectAndLaunch() {
+        JFrame loading = new JFrame(AppConstants.APP_NAME);
+        loading.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        JPanel content = new JPanel(new BorderLayout());
+        content.setBorder(BorderFactory.createEmptyBorder(24, 32, 24, 32));
+        content.add(new JLabel("Connexion à la base de données…", JLabel.CENTER), BorderLayout.CENTER);
+        loading.setContentPane(content);
+        loading.setSize(380, 110);
+        loading.setLocationRelativeTo(null);
+        loading.setVisible(true);
+
+        new SwingWorker<Boolean, Void>() {
+            @Override
+            protected Boolean doInBackground() {
+                return DatabaseConfig.getInstance().testConnection();
+            }
+
+            @Override
+            protected void done() {
+                loading.dispose();
+                try {
+                    if (get()) new LoginController().showLoginView();
+                    else showConnectionError();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    showConnectionError();
+                } catch (ExecutionException e) {
+                    showConnectionError();
+                }
+            }
+        }.execute();
+    }
+
+    private static void showConnectionError() {
+        DialogUtils.showError(
+                """
+                Impossible de se connecter à la base de données.
+                Vérifiez l'accès internet, les paramètres .env et le schéma Supabase.
+
+                URL : """ + AppConstants.DB_URL + "\n"
+                + "Utilisateur : " + AppConstants.DB_USER
+        );
     }
 }

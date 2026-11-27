@@ -2,6 +2,7 @@ package com.pharmacie.views;
 
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
@@ -11,7 +12,9 @@ import java.awt.Insets;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutionException;
 
 import javax.swing.BorderFactory;
@@ -24,6 +27,8 @@ import javax.swing.JSplitPane;
 import javax.swing.JTable;
 import javax.swing.JTextField;
 import javax.swing.SwingWorker;
+import javax.swing.ListSelectionModel;
+import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 
 import com.pharmacie.dao.ClientDAO;
@@ -36,6 +41,8 @@ import com.pharmacie.models.Vente;
 import com.pharmacie.models.VenteDetail;
 import com.pharmacie.utils.DialogUtils;
 import com.pharmacie.utils.FormatUtils;
+import com.pharmacie.utils.TableUi;
+import com.pharmacie.utils.FormValidation;
 
 public class VenteView extends JPanel {
 
@@ -57,8 +64,12 @@ public class VenteView extends JPanel {
     private JLabel lblRemise;
     private JTextField txtRemise;
     private JLabel lblNetPayer;
+    private JLabel lblRechercheStatus;
 
     private final  List<VenteDetail> panier;
+    private final Map<Integer, Integer> stockRecherche = new HashMap<>();
+    private int rechercheGeneration;
+    private boolean venteEnCours;
 
     public VenteView(MainFrame mainFrame, Utilisateur utilisateur) {
         this.utilisateur = utilisateur;
@@ -74,16 +85,18 @@ public class VenteView extends JPanel {
 
     private void initComponents() {
         txtRecherche = new JTextField(20);
+        txtRecherche.putClientProperty("JTextField.placeholderText", "Nom ou code-barres…");
         cmbClient = new JComboBox<>();
         lblTotalArticles = new JLabel("0");
         lblMontantTotal = new JLabel("0,00 Ar");
         lblRemise = new JLabel("0,00 Ar");
         txtRemise = new JTextField("0", 5);
         lblNetPayer = new JLabel("0,00 Ar");
+        lblRechercheStatus = new JLabel("Saisissez un nom ou un code-barres pour rechercher.");
 
         // Table des résultats de recherche
         modelResultats = new DefaultTableModel(
-                new Object[]{"ID", "Nom", "Prix Vente", "Stock", "Catégorie"}, 0
+                new Object[]{"ID", "Médicament", "Prix de vente", "Stock", "Seuil", "Catégorie"}, 0
         ) {
             @Override
             public boolean isCellEditable(int row, int column) {
@@ -91,7 +104,30 @@ public class VenteView extends JPanel {
             }
         };
         tblResultats = new JTable(modelResultats);
-        tblResultats.setRowHeight(25);
+        TableUi.apply(tblResultats);
+        tblResultats.setAutoCreateRowSorter(true);
+        tblResultats.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        tblResultats.removeColumn(tblResultats.getColumnModel().getColumn(0)); // ID interne
+        tblResultats.removeColumn(tblResultats.getColumnModel().getColumn(3)); // Seuil utilisé pour l'alerte
+        tblResultats.getColumnModel().getColumn(2).setCellRenderer(new DefaultTableCellRenderer() {
+            @Override
+            public Component getTableCellRendererComponent(JTable table, Object value,
+                    boolean selected, boolean focused, int row, int column) {
+                Component cell = super.getTableCellRendererComponent(table, value, selected, focused, row, column);
+                int modelRow = table.convertRowIndexToModel(row);
+                int stock = (int) modelResultats.getValueAt(modelRow, 3);
+                int threshold = (int) modelResultats.getValueAt(modelRow, 4);
+                if (!selected && stock <= threshold) {
+                    cell.setBackground(stock == 0 ? new Color(255, 235, 238) : new Color(255, 248, 225));
+                    cell.setForeground(stock == 0 ? new Color(183, 28, 28) : new Color(130, 90, 0));
+                } else if (!selected) {
+                    cell.setBackground(table.getBackground());
+                    cell.setForeground(table.getForeground());
+                }
+                setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
+                return cell;
+            }
+        });
 
         // Table du panier
         modelPanier = new DefaultTableModel(
@@ -108,7 +144,8 @@ public class VenteView extends JPanel {
             }
         };
         tblPanier = new JTable(modelPanier);
-        tblPanier.setRowHeight(28);
+        TableUi.apply(tblPanier);
+        tblPanier.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
     }
 
     private void setupLayout() {
@@ -144,7 +181,10 @@ public class VenteView extends JPanel {
         JLabel lblHint = new JLabel("Double-cliquez sur un médicament pour l'ajouter au panier");
         lblHint.setFont(new Font("Segoe UI", Font.ITALIC, 11));
         lblHint.setForeground(Color.GRAY);
-        panelGauche.add(lblHint, BorderLayout.SOUTH);
+        JPanel panelSearchFooter = new JPanel(new BorderLayout(4, 4));
+        panelSearchFooter.add(lblHint, BorderLayout.NORTH);
+        panelSearchFooter.add(lblRechercheStatus, BorderLayout.SOUTH);
+        panelGauche.add(panelSearchFooter, BorderLayout.SOUTH);
 
         // --- Panel droit : Panier ---
         JPanel panelDroit = new JPanel(new BorderLayout(5, 5));
@@ -207,6 +247,7 @@ public class VenteView extends JPanel {
         btnEnregistrer.setFont(new Font("Segoe UI", Font.BOLD, 14));
         btnEnregistrer.setBackground(new Color(0, 150, 136));
         btnEnregistrer.setForeground(Color.WHITE);
+        btnEnregistrer.setFocusPainted(false);
         JButton btnVider = new JButton("Vider le panier");
         JButton btnSupprimer = new JButton("Supprimer la sélection");
         panelBoutons.add(btnEnregistrer);
@@ -255,7 +296,9 @@ public class VenteView extends JPanel {
         });
 
         // Appliquer remise
-        btnAppliquerRemise.addActionListener(e -> calculerTotaux());
+        btnAppliquerRemise.addActionListener(e -> {
+            if (lireRemise() != null) calculerTotaux();
+        });
 
         // Enregistrer vente
         btnEnregistrer.addActionListener(e -> enregistrerVente());
@@ -274,35 +317,63 @@ public class VenteView extends JPanel {
     private void loadClients() {
         cmbClient.removeAllItems();
         cmbClient.addItem(new Client(0, "---", "Anonyme", null, null, null));
-        List<Client> clients = clientDAO.findAll();
-        for (Client c : clients) {
-            cmbClient.addItem(c);
-        }
+        new SwingWorker<List<Client>, Void>() {
+            @Override protected List<Client> doInBackground() { return clientDAO.findAll(); }
+            @Override protected void done() {
+                try {
+                    for (Client c : get()) cmbClient.addItem(c);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } catch (ExecutionException e) {
+                    DialogUtils.showErrorMessage(e, "Erreur de chargement des clients");
+                }
+            }
+        }.execute();
     }
 
     private void rechercherMedicaments() {
         String keyword = txtRecherche.getText().trim();
-        List<Medicament> medicaments;
+        int generation = ++rechercheGeneration;
         if (keyword.isEmpty()) {
-            medicaments = medicamentDAO.findAll();
-        } else {
-            medicaments = medicamentDAO.searchByNom(keyword);
+            modelResultats.setRowCount(0);
+            lblRechercheStatus.setText("Saisissez un nom ou un code-barres pour rechercher.");
+            return;
         }
-
-        modelResultats.setRowCount(0);
-        for (Medicament m : medicaments) {
-            modelResultats.addRow(new Object[]{
-                    m.getId(), m.getNom(),
-                    FormatUtils.formatCurrency(m.getPrixVente()),
-                    m.getQuantiteStock(),
-                    m.getCategorieNom() != null ? m.getCategorieNom() : ""
-            });
-        }
+        lblRechercheStatus.setText("Recherche en cours…");
+        new SwingWorker<List<Medicament>, Void>() {
+            @Override protected List<Medicament> doInBackground() {
+                return medicamentDAO.searchByNom(keyword);
+            }
+            @Override protected void done() {
+                if (generation != rechercheGeneration) return;
+                try {
+                    modelResultats.setRowCount(0);
+                    for (Medicament m : get()) {
+                        stockRecherche.put(m.getId(), m.getQuantiteStock());
+                        modelResultats.addRow(new Object[]{
+                                m.getId(), m.getNom(), FormatUtils.formatCurrency(m.getPrixVente()),
+                                m.getQuantiteStock(), m.getSeuilAlerte(),
+                                m.getCategorieNom() != null ? m.getCategorieNom() : ""
+                        });
+                    }
+                    int count = modelResultats.getRowCount();
+                    lblRechercheStatus.setText(count == 0
+                            ? "Aucun médicament correspondant."
+                            : count + " médicament(s) trouvé(s).");
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } catch (ExecutionException e) {
+                    lblRechercheStatus.setText("Recherche impossible. Vérifiez la connexion.");
+                    DialogUtils.showErrorMessage(e, "Erreur de recherche des médicaments");
+                }
+            }
+        }.execute();
     }
 
     private void ajouterAuPanier() {
-        int selectedRow = tblResultats.getSelectedRow();
-        if (selectedRow < 0) return;
+        int selectedViewRow = tblResultats.getSelectedRow();
+        if (selectedViewRow < 0) return;
+        int selectedRow = tblResultats.convertRowIndexToModel(selectedViewRow);
 
         int medicamentId = (int) modelResultats.getValueAt(selectedRow, 0);
         String nom = (String) modelResultats.getValueAt(selectedRow, 1);
@@ -350,7 +421,7 @@ public class VenteView extends JPanel {
 
     private void recalculerLigne(int row) {
         int qty = (int) modelPanier.getValueAt(row, 2);
-        if (qty <= 0) qty = 1;
+        if (qty <= 0) return;
         BigDecimal prix = FormatUtils.parseCurrency(modelPanier.getValueAt(row, 1).toString());
         BigDecimal sousTotal = prix.multiply(BigDecimal.valueOf(qty));
         modelPanier.setValueAt(FormatUtils.formatCurrency(sousTotal), row, 3);
@@ -373,7 +444,7 @@ public class VenteView extends JPanel {
 
         double remisePercent = 0;
         try {
-            remisePercent = Double.parseDouble(txtRemise.getText().trim());
+            remisePercent = Double.parseDouble(txtRemise.getText().trim().replace(',', '.'));
         } catch (NumberFormatException ignored) {}
 
         BigDecimal remise = total.multiply(BigDecimal.valueOf(remisePercent))
@@ -405,6 +476,7 @@ public class VenteView extends JPanel {
     }
 
     private void enregistrerVente() {
+        if (venteEnCours) return;
         if (panier.isEmpty()) {
             DialogUtils.showWarning("Le panier est vide !");
             return;
@@ -413,6 +485,29 @@ public class VenteView extends JPanel {
         Double remisePercent = lireRemise();
         if (remisePercent == null) {
             return;
+        }
+
+        for (int row = 0; row < modelPanier.getRowCount(); row++) {
+            int quantity;
+            try {
+                Object value = modelPanier.getValueAt(row, 2);
+                if (value instanceof Number number) quantity = number.intValue();
+                else if (value != null && value.toString().trim().matches("\\d+")) {
+                    quantity = Integer.parseInt(value.toString().trim());
+                } else throw new NumberFormatException();
+            } catch (NumberFormatException ex) {
+                validerQuantitePanier(row, "La quantité doit être un entier supérieur à zéro.");
+                return;
+            }
+            if (quantity <= 0) {
+                validerQuantitePanier(row, "La quantité doit être supérieure à zéro.");
+                return;
+            }
+            int stock = stockRecherche.getOrDefault(panier.get(row).getMedicamentId(), 0);
+            if (quantity > stock) {
+                validerQuantitePanier(row, "Stock insuffisant : " + stock + " unité(s) disponible(s).");
+                return;
+            }
         }
 
         if (!DialogUtils.showConfirmation("Confirmer la vente ?")) {
@@ -442,6 +537,7 @@ public class VenteView extends JPanel {
         }
 
         // Sauvegarder dans un thread séparé
+        venteEnCours = true;
         SwingWorker<Boolean, Void> worker = new SwingWorker<>() {
             @Override
             protected Boolean doInBackground() {
@@ -462,22 +558,37 @@ public class VenteView extends JPanel {
                     }
                 } catch (InterruptedException | ExecutionException e) {
                     DialogUtils.showErrorMessage(e, "Erreur lors de la vente");
+                } finally {
+                    venteEnCours = false;
                 }
             }
         };
         worker.execute();
     }
 
+    private void validerQuantitePanier(int row, String message) {
+        tblPanier.changeSelection(row, 2, false, false);
+        tblPanier.scrollRectToVisible(tblPanier.getCellRect(row, 2, true));
+        DialogUtils.showWarning(message);
+        tblPanier.editCellAt(row, 2);
+        tblPanier.requestFocusInWindow();
+    }
+
     private Double lireRemise() {
+        FormValidation.clear(txtRemise);
         try {
-            double remise = Double.parseDouble(txtRemise.getText().trim());
-            if (Double.isFinite(remise) && remise >= 0 && remise <= 100) {
-                return remise;
+            String value = txtRemise.getText().trim().replace(',', '.');
+            if (value.matches("\\d+(\\.\\d{1,2})?")) {
+                BigDecimal remise = new BigDecimal(value);
+                if (remise.compareTo(BigDecimal.ZERO) >= 0
+                        && remise.compareTo(BigDecimal.valueOf(100)) <= 0) {
+                    return remise.doubleValue();
+                }
             }
         } catch (NumberFormatException ignored) {
             // Le message ci-dessous explique la correction attendue.
         }
-        DialogUtils.showWarning("La remise doit être un nombre compris entre 0 et 100.");
+        FormValidation.invalid(txtRemise, "La remise doit être comprise entre 0 et 100 % (deux décimales maximum).");
         return null;
     }
 

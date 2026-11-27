@@ -10,6 +10,7 @@ import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicLong;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
@@ -28,6 +29,8 @@ import javax.swing.table.DefaultTableModel;
 import com.pharmacie.dao.ClientDAO;
 import com.pharmacie.models.Client;
 import com.pharmacie.utils.DialogUtils;
+import com.pharmacie.utils.TableUi;
+import com.pharmacie.utils.FormValidation;
 
 public class ClientView extends JPanel {
 
@@ -37,6 +40,7 @@ public class ClientView extends JPanel {
     private JTextField txtRecherche;
     private JTable tblClients;
     private DefaultTableModel model;
+    private final AtomicLong tableRequest = new AtomicLong();
 
     public ClientView(MainFrame mainFrame) {
        
@@ -57,7 +61,9 @@ public class ClientView extends JPanel {
             public boolean isCellEditable(int row, int column) { return false; }
         };
         tblClients = new JTable(model);
-        tblClients.setRowHeight(26);
+        TableUi.apply(tblClients);
+        tblClients.setAutoCreateRowSorter(true);
+        tblClients.setAutoCreateRowSorter(true);
         tblClients.getColumnModel().getColumn(0).setMaxWidth(50);
     }
 
@@ -118,6 +124,7 @@ public class ClientView extends JPanel {
     }
 
     private void loadTable() {
+        long requestId = tableRequest.incrementAndGet();
         SwingWorker<List<Client>, Void> worker = new SwingWorker<>() {
             @Override
             protected List<Client> doInBackground() {
@@ -126,6 +133,7 @@ public class ClientView extends JPanel {
 
             @Override
             protected void done() {
+                if (requestId != tableRequest.get()) return;
                 try {
                     afficherClients(get());
                 } catch (InterruptedException | ExecutionException e) {
@@ -138,6 +146,7 @@ public class ClientView extends JPanel {
 
     private void rechercher() {
         String keyword = txtRecherche.getText().trim();
+        long requestId = tableRequest.incrementAndGet();
         SwingWorker<List<Client>, Void> worker = new SwingWorker<>() {
             @Override
             protected List<Client> doInBackground() {
@@ -146,6 +155,7 @@ public class ClientView extends JPanel {
 
             @Override
             protected void done() {
+                if (requestId != tableRequest.get()) return;
                 try {
                     afficherClients(get());
                 } catch (InterruptedException | ExecutionException e) {
@@ -174,11 +184,15 @@ public class ClientView extends JPanel {
             DialogUtils.showWarning("Veuillez sélectionner un client.");
             return;
         }
+        row = tblClients.convertRowIndexToModel(row);
         int id = (int) model.getValueAt(row, 0);
-        Client c = clientDAO.findById(id);
-        if (c != null) {
-            ouvrirDialog(c);
-        }
+        Client c = new Client(id,
+                String.valueOf(model.getValueAt(row, 1)),
+                String.valueOf(model.getValueAt(row, 2)),
+                String.valueOf(model.getValueAt(row, 3)),
+                String.valueOf(model.getValueAt(row, 4)),
+                String.valueOf(model.getValueAt(row, 5)));
+        ouvrirDialog(c);
     }
 
     private void supprimer() {
@@ -187,6 +201,7 @@ public class ClientView extends JPanel {
             DialogUtils.showWarning("Veuillez sélectionner un client.");
             return;
         }
+        row = tblClients.convertRowIndexToModel(row);
         int id = (int) model.getValueAt(row, 0);
         String nom = model.getValueAt(row, 1) + " " + model.getValueAt(row, 2);
         if (DialogUtils.showConfirmation(
@@ -230,6 +245,7 @@ public class ClientView extends JPanel {
 
         private boolean confirmed = false;
         private int editingId = 0;
+        private JButton btnOK;
         private JTextField txtNom, txtPrenom, txtTelephone, txtEmail;
         private JTextArea txtAdresse;
 
@@ -272,7 +288,7 @@ public class ClientView extends JPanel {
             gbc.gridx = 0; gbc.gridy = y; gbc.gridwidth = 2;
             gbc.anchor = GridBagConstraints.CENTER;
             JPanel panelBtn = new JPanel(new FlowLayout(FlowLayout.CENTER, 20, 5));
-            JButton btnOK = new JButton("Enregistrer");
+            btnOK = new JButton("Enregistrer");
             btnOK.setBackground(new Color(76, 175, 80));
             btnOK.setForeground(Color.WHITE);
             JButton btnCancel = new JButton("Annuler");
@@ -294,8 +310,26 @@ public class ClientView extends JPanel {
         }
 
         private void onOK() {
+            FormValidation.clear(txtNom, txtPrenom, txtTelephone, txtEmail);
             if (txtNom.getText().trim().isEmpty() || txtPrenom.getText().trim().isEmpty()) {
-                DialogUtils.showWarning("Le nom et le prénom sont obligatoires.");
+                FormValidation.invalid(txtNom.getText().trim().isEmpty() ? txtNom : txtPrenom,
+                        "Le nom et le prénom sont obligatoires.");
+                return;
+            }
+            if (txtNom.getText().trim().length() > 100) {
+                FormValidation.invalid(txtNom, "Le nom ne peut pas dépasser 100 caractères.");
+                return;
+            }
+            if (txtPrenom.getText().trim().length() > 100) {
+                FormValidation.invalid(txtPrenom, "Le prénom ne peut pas dépasser 100 caractères.");
+                return;
+            }
+            if (!FormValidation.isValidPhone(txtTelephone.getText().trim())) {
+                FormValidation.invalid(txtTelephone, "Numéro invalide : utilisez 7 à 15 chiffres (maximum 20 caractères).");
+                return;
+            }
+            if (!FormValidation.isValidEmail(txtEmail.getText().trim())) {
+                FormValidation.invalid(txtEmail, "Adresse e-mail invalide ou trop longue (100 caractères maximum).");
                 return;
             }
             Client c = new Client();
@@ -305,20 +339,27 @@ public class ClientView extends JPanel {
             c.setTelephone(txtTelephone.getText().trim());
             c.setEmail(txtEmail.getText().trim());
 
-            boolean success;
             if (editingId > 0) {
                 c.setId(editingId);
-                success = clientDAO.update(c);
-            } else {
-                success = clientDAO.insert(c);
             }
-
-            if (success) {
-                confirmed = true;
-                dispose();
-            } else {
-                DialogUtils.showError("Erreur lors de l'enregistrement.");
-            }
+            btnOK.setEnabled(false);
+            new SwingWorker<Boolean, Void>() {
+                @Override protected Boolean doInBackground() {
+                    return editingId > 0 ? clientDAO.update(c) : clientDAO.insert(c);
+                }
+                @Override protected void done() {
+                    btnOK.setEnabled(true);
+                    try {
+                        if (get()) { confirmed = true; dispose(); }
+                        else DialogUtils.showError("Erreur lors de l'enregistrement.");
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        DialogUtils.showError("Enregistrement interrompu.");
+                    } catch (ExecutionException e) {
+                        DialogUtils.showErrorMessage(e, "Erreur lors de l'enregistrement");
+                    }
+                }
+            }.execute();
         }
 
         public boolean isConfirmed() { return confirmed; }

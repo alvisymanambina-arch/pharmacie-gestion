@@ -4,6 +4,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.time.format.ResolverStyle;
 
 public class DateUtils {
 
@@ -27,10 +28,12 @@ public class DateUtils {
     public static LocalDate parseDate(String dateStr) {
         if (dateStr == null || dateStr.isEmpty()) return null;
         try {
-            return LocalDate.parse(dateStr, DateTimeFormatter.ofPattern(DATE_FORMAT));
+            return LocalDate.parse(dateStr,
+                    DateTimeFormatter.ofPattern("dd/MM/uuuu").withResolverStyle(ResolverStyle.STRICT));
         } catch (DateTimeParseException e) {
             try {
-                return LocalDate.parse(dateStr, DateTimeFormatter.ofPattern(SQL_DATE_FORMAT));
+                return LocalDate.parse(dateStr,
+                        DateTimeFormatter.ofPattern("uuuu-MM-dd").withResolverStyle(ResolverStyle.STRICT));
             } catch (DateTimeParseException e2) {
                 return null;
             }
@@ -40,10 +43,12 @@ public class DateUtils {
     public static LocalDateTime parseDateTime(String dateTimeStr) {
         if (dateTimeStr == null || dateTimeStr.isEmpty()) return null;
         try {
-            return LocalDateTime.parse(dateTimeStr, DateTimeFormatter.ofPattern(DATETIME_FORMAT));
+            return LocalDateTime.parse(dateTimeStr,
+                    DateTimeFormatter.ofPattern("dd/MM/uuuu HH:mm").withResolverStyle(ResolverStyle.STRICT));
         } catch (DateTimeParseException e) {
             try {
-                return LocalDateTime.parse(dateTimeStr, DateTimeFormatter.ofPattern(SQL_DATETIME_FORMAT));
+                return LocalDateTime.parse(dateTimeStr,
+                        DateTimeFormatter.ofPattern("uuuu-MM-dd HH:mm:ss").withResolverStyle(ResolverStyle.STRICT));
             } catch (DateTimeParseException e2) {
                 return null;
             }
@@ -55,8 +60,9 @@ public class DateUtils {
     }
 
     public static boolean isExpirationProche(LocalDate date, int jours) {
-        return date != null && !date.isBefore(LocalDate.now())
-                && date.isBefore(LocalDate.now().plusDays(jours));
+        LocalDate today = LocalDate.now();
+        return date != null && !date.isBefore(today)
+                && !date.isAfter(today.plusDays(jours));
     }
 
     public static String getMoisNom(int mois) {

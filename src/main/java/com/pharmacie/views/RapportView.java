@@ -9,6 +9,7 @@ import java.text.SimpleDateFormat;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicLong;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
@@ -30,6 +31,7 @@ import com.pharmacie.models.Medicament;
 import com.pharmacie.models.Vente;
 import com.pharmacie.utils.DateUtils;
 import com.pharmacie.utils.FormatUtils;
+import com.pharmacie.utils.TableUi;
 
 public class RapportView extends JPanel {
 
@@ -56,6 +58,9 @@ public class RapportView extends JPanel {
     private JTable tblApprovisionnements;
     private DefaultTableModel modelAppro;
     private JLabel lblTotalAppro;
+    private final AtomicLong ventesRequest = new AtomicLong();
+    private final AtomicLong stockRequest = new AtomicLong();
+    private final AtomicLong approRequest = new AtomicLong();
 
     public RapportView(MainFrame mainFrame) {
         this.venteDAO = new VenteDAO();
@@ -84,7 +89,8 @@ public class RapportView extends JPanel {
             public boolean isCellEditable(int row, int column) { return false; }
         };
         tblVentes = new JTable(modelVentes);
-        tblVentes.setRowHeight(25);
+        TableUi.apply(tblVentes);
+        tblVentes.setAutoCreateRowSorter(true);
         lblTotalVentes = new JLabel("Total : 0,00 Ar");
 
         // Tab Stock
@@ -95,7 +101,8 @@ public class RapportView extends JPanel {
             public boolean isCellEditable(int row, int column) { return false; }
         };
         tblStock = new JTable(modelStock);
-        tblStock.setRowHeight(25);
+        TableUi.apply(tblStock);
+        tblStock.setAutoCreateRowSorter(true);
         lblValeurStock = new JLabel("Valeur totale du stock : 0,00 Ar");
 
         // Tab Approvisionnements
@@ -113,7 +120,8 @@ public class RapportView extends JPanel {
             public boolean isCellEditable(int row, int column) { return false; }
         };
         tblApprovisionnements = new JTable(modelAppro);
-        tblApprovisionnements.setRowHeight(25);
+        TableUi.apply(tblApprovisionnements);
+        tblApprovisionnements.setAutoCreateRowSorter(true);
         lblTotalAppro = new JLabel("Total : 0,00 Ar");
     }
 
@@ -220,7 +228,12 @@ public class RapportView extends JPanel {
             com.pharmacie.utils.DialogUtils.showWarning("Veuillez saisir des dates valides (dd/MM/yyyy).");
             return;
         }
+        if (debut.isAfter(fin)) {
+            com.pharmacie.utils.DialogUtils.showWarning("La date de début doit précéder la date de fin.");
+            return;
+        }
 
+        long requestId = ventesRequest.incrementAndGet();
         SwingWorker<List<Vente>, Void> worker = new SwingWorker<>() {
             @Override
             protected List<Vente> doInBackground() {
@@ -229,6 +242,7 @@ public class RapportView extends JPanel {
 
             @Override
             protected void done() {
+                if (requestId != ventesRequest.get()) return;
                 try {
                     List<Vente> ventes = get();
                     modelVentes.setRowCount(0);
@@ -243,8 +257,9 @@ public class RapportView extends JPanel {
                             BigDecimal denom = BigDecimal.ONE.subtract(
                                     remisePct.divide(BigDecimal.valueOf(100), 6,
                                             java.math.RoundingMode.HALF_UP));
-                            brut = v.getMontantTotal().divide(denom, 2,
-                                    java.math.RoundingMode.HALF_UP);
+                            brut = denom.signum() == 0 ? BigDecimal.ZERO
+                                    : v.getMontantTotal().divide(denom, 2,
+                                            java.math.RoundingMode.HALF_UP);
                         } else {
                             brut = v.getMontantTotal();
                         }
@@ -270,6 +285,7 @@ public class RapportView extends JPanel {
     }
 
     private void chargerStock() {
+        long requestId = stockRequest.incrementAndGet();
         SwingWorker<List<Medicament>, Void> worker = new SwingWorker<>() {
             @Override
             protected List<Medicament> doInBackground() {
@@ -278,6 +294,7 @@ public class RapportView extends JPanel {
 
             @Override
             protected void done() {
+                if (requestId != stockRequest.get()) return;
                 try {
                     List<Medicament> medicaments = get();
                     modelStock.setRowCount(0);
@@ -314,7 +331,12 @@ public class RapportView extends JPanel {
             com.pharmacie.utils.DialogUtils.showWarning("Veuillez saisir des dates valides (dd/MM/yyyy).");
             return;
         }
+        if (debut.isAfter(fin)) {
+            com.pharmacie.utils.DialogUtils.showWarning("La date de début doit précéder la date de fin.");
+            return;
+        }
 
+        long requestId = approRequest.incrementAndGet();
         SwingWorker<List<Approvisionnement>, Void> worker = new SwingWorker<>() {
             @Override
             protected List<Approvisionnement> doInBackground() {
@@ -323,6 +345,7 @@ public class RapportView extends JPanel {
 
             @Override
             protected void done() {
+                if (requestId != approRequest.get()) return;
                 try {
                     List<Approvisionnement> appros = get();
                     modelAppro.setRowCount(0);

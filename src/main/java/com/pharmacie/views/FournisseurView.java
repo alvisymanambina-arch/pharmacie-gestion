@@ -3,12 +3,15 @@ package com.pharmacie.views;
 import com.pharmacie.dao.FournisseurDAO;
 import com.pharmacie.models.Fournisseur;
 import com.pharmacie.utils.DialogUtils;
+import com.pharmacie.utils.TableUi;
+import com.pharmacie.utils.FormValidation;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class FournisseurView extends JPanel {
 
@@ -17,6 +20,7 @@ public class FournisseurView extends JPanel {
     private JTextField txtRecherche;
     private JTable tblFournisseurs;
     private DefaultTableModel model;
+    private final AtomicLong tableRequest = new AtomicLong();
 
     public FournisseurView(MainFrame mainFrame) {
         this.fournisseurDAO = new FournisseurDAO();
@@ -36,7 +40,9 @@ public class FournisseurView extends JPanel {
             public boolean isCellEditable(int row, int column) { return false; }
         };
         tblFournisseurs = new JTable(model);
-        tblFournisseurs.setRowHeight(26);
+        TableUi.apply(tblFournisseurs);
+        tblFournisseurs.setAutoCreateRowSorter(true);
+        tblFournisseurs.setAutoCreateRowSorter(true);
         tblFournisseurs.getColumnModel().getColumn(0).setMaxWidth(50);
     }
 
@@ -95,6 +101,7 @@ public class FournisseurView extends JPanel {
     }
 
     private void loadTable() {
+        long requestId = tableRequest.incrementAndGet();
         SwingWorker<List<Fournisseur>, Void> worker = new SwingWorker<>() {
             @Override
             protected List<Fournisseur> doInBackground() {
@@ -103,6 +110,7 @@ public class FournisseurView extends JPanel {
 
             @Override
             protected void done() {
+                if (requestId != tableRequest.get()) return;
                 try {
                     afficherFournisseurs(get());
                 } catch (InterruptedException | ExecutionException e) {
@@ -115,6 +123,7 @@ public class FournisseurView extends JPanel {
 
     private void rechercher() {
         String keyword = txtRecherche.getText().trim();
+        long requestId = tableRequest.incrementAndGet();
         SwingWorker<List<Fournisseur>, Void> worker = new SwingWorker<>() {
             @Override
             protected List<Fournisseur> doInBackground() {
@@ -123,6 +132,7 @@ public class FournisseurView extends JPanel {
 
             @Override
             protected void done() {
+                if (requestId != tableRequest.get()) return;
                 try {
                     afficherFournisseurs(get());
                 } catch (InterruptedException | ExecutionException e) {
@@ -152,11 +162,15 @@ public class FournisseurView extends JPanel {
             DialogUtils.showWarning("Veuillez sélectionner un fournisseur.");
             return;
         }
+        row = tblFournisseurs.convertRowIndexToModel(row);
         int id = (int) model.getValueAt(row, 0);
-        Fournisseur f = fournisseurDAO.findById(id);
-        if (f != null) {
-            ouvrirDialog(f);
-        }
+        Fournisseur f = new Fournisseur(id,
+                String.valueOf(model.getValueAt(row, 1)),
+                String.valueOf(model.getValueAt(row, 2)),
+                String.valueOf(model.getValueAt(row, 3)),
+                String.valueOf(model.getValueAt(row, 4)),
+                String.valueOf(model.getValueAt(row, 5)));
+        ouvrirDialog(f);
     }
 
     private void supprimer() {
@@ -165,6 +179,7 @@ public class FournisseurView extends JPanel {
             DialogUtils.showWarning("Veuillez sélectionner un fournisseur.");
             return;
         }
+        row = tblFournisseurs.convertRowIndexToModel(row);
         int id = (int) model.getValueAt(row, 0);
         String nom = (String) model.getValueAt(row, 1);
         if (DialogUtils.showConfirmation(
@@ -208,6 +223,7 @@ public class FournisseurView extends JPanel {
 
         private boolean confirmed = false;
         private int editingId = 0;
+        private JButton btnOK;
         private JTextField txtNom, txtTelephone, txtEmail, txtContact;
         private JTextArea txtAdresse;
 
@@ -250,7 +266,7 @@ public class FournisseurView extends JPanel {
             gbc.gridx = 0; gbc.gridy = y; gbc.gridwidth = 2;
             gbc.anchor = GridBagConstraints.CENTER;
             JPanel panelBtn = new JPanel(new FlowLayout(FlowLayout.CENTER, 20, 5));
-            JButton btnOK = new JButton("Enregistrer");
+            btnOK = new JButton("Enregistrer");
             btnOK.setBackground(new Color(76, 175, 80));
             btnOK.setForeground(Color.WHITE);
             JButton btnCancel = new JButton("Annuler");
@@ -272,8 +288,25 @@ public class FournisseurView extends JPanel {
         }
 
         private void onOK() {
+            FormValidation.clear(txtNom, txtTelephone, txtEmail, txtContact);
             if (txtNom.getText().trim().isEmpty()) {
-                DialogUtils.showWarning("Le nom est obligatoire.");
+                FormValidation.invalid(txtNom, "Le nom est obligatoire.");
+                return;
+            }
+            if (txtNom.getText().trim().length() > 200) {
+                FormValidation.invalid(txtNom, "Le nom ne peut pas dépasser 200 caractères.");
+                return;
+            }
+            if (txtContact.getText().trim().length() > 100) {
+                FormValidation.invalid(txtContact, "Le contact ne peut pas dépasser 100 caractères.");
+                return;
+            }
+            if (!FormValidation.isValidPhone(txtTelephone.getText().trim())) {
+                FormValidation.invalid(txtTelephone, "Numéro invalide : utilisez 7 à 15 chiffres (maximum 20 caractères).");
+                return;
+            }
+            if (!FormValidation.isValidEmail(txtEmail.getText().trim())) {
+                FormValidation.invalid(txtEmail, "Adresse e-mail invalide ou trop longue (100 caractères maximum).");
                 return;
             }
             Fournisseur f = new Fournisseur();
@@ -283,20 +316,27 @@ public class FournisseurView extends JPanel {
             f.setEmail(txtEmail.getText().trim());
             f.setContactPerson(txtContact.getText().trim());
 
-            boolean success;
             if (editingId > 0) {
                 f.setId(editingId);
-                success = fournisseurDAO.update(f);
-            } else {
-                success = fournisseurDAO.insert(f);
             }
-
-            if (success) {
-                confirmed = true;
-                dispose();
-            } else {
-                DialogUtils.showError("Erreur lors de l'enregistrement.");
-            }
+            btnOK.setEnabled(false);
+            new SwingWorker<Boolean, Void>() {
+                @Override protected Boolean doInBackground() {
+                    return editingId > 0 ? fournisseurDAO.update(f) : fournisseurDAO.insert(f);
+                }
+                @Override protected void done() {
+                    btnOK.setEnabled(true);
+                    try {
+                        if (get()) { confirmed = true; dispose(); }
+                        else DialogUtils.showError("Erreur lors de l'enregistrement.");
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        DialogUtils.showError("Enregistrement interrompu.");
+                    } catch (ExecutionException e) {
+                        DialogUtils.showErrorMessage(e, "Erreur lors de l'enregistrement");
+                    }
+                }
+            }.execute();
         }
 
         public boolean isConfirmed() { return confirmed; }

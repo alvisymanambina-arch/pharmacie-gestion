@@ -22,16 +22,16 @@ public class FormatUtils {
 
     private FormatUtils() {}
 
-    public static String formatCurrency(BigDecimal montant) {
+    public static synchronized String formatCurrency(BigDecimal montant) {
         if (montant == null) return "0,00 Ar";
         return CURRENCY_FORMAT.format(montant);
     }
 
-    public static String formatNumber(int nombre) {
+    public static synchronized String formatNumber(int nombre) {
         return NUMBER_FORMAT.format(nombre);
     }
 
-    public static String formatNumber(Object nombre) {
+    public static synchronized String formatNumber(Object nombre) {
         if (nombre == null) return "0";
         return NUMBER_FORMAT.format(nombre);
     }

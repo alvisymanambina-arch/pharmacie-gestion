@@ -35,6 +35,7 @@ public class UtilisateurDAO implements BaseDAO<Utilisateur> {
         } catch (SQLException e) {
             System.err.println("[UtilisateurDAO] Error finding utilisateur by id: " + e.getMessage());
             e.printStackTrace();
+            throw new IllegalStateException("Impossible de charger cet utilisateur depuis la base.", e);
         }
         return null;
     }
@@ -52,6 +53,7 @@ public class UtilisateurDAO implements BaseDAO<Utilisateur> {
         } catch (SQLException e) {
             System.err.println("[UtilisateurDAO] Error finding all utilisateurs: " + e.getMessage());
             e.printStackTrace();
+            throw new IllegalStateException("Impossible de charger les utilisateurs depuis la base.", e);
         }
         return utilisateurs;
     }
@@ -173,6 +175,7 @@ public class UtilisateurDAO implements BaseDAO<Utilisateur> {
         } catch (SQLException e) {
             System.err.println("[UtilisateurDAO] Error finding utilisateur by username: " + e.getMessage());
             e.printStackTrace();
+            throw new IllegalStateException("Impossible de vérifier les identifiants auprès de la base.", e);
         }
         return null;
     }
@@ -210,6 +213,7 @@ public class UtilisateurDAO implements BaseDAO<Utilisateur> {
         } catch (SQLException e) {
             System.err.println("[UtilisateurDAO] Error finding utilisateurs by role: " + e.getMessage());
             e.printStackTrace();
+            throw new IllegalStateException("Impossible de filtrer les utilisateurs dans la base.", e);
         }
         return utilisateurs;
     }

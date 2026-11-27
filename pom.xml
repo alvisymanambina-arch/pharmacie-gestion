@@ -27,6 +27,13 @@
             <version>42.7.14</version>
         </dependency>
 
+        <!-- Reuse PostgreSQL connections instead of reopening TLS sessions for every query -->
+        <dependency>
+            <groupId>com.zaxxer</groupId>
+            <artifactId>HikariCP</artifactId>
+            <version>5.1.0</version>
+        </dependency>
+
         <!-- FlatLaf - Look and Feel moderne pour Swing -->
         <dependency>
             <groupId>com.formdev</groupId>

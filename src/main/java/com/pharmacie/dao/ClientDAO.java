@@ -1,8 +1,5 @@
 package com.pharmacie.dao;
 
-import com.pharmacie.config.DatabaseConfig;
-import com.pharmacie.models.Client;
-
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -10,6 +7,9 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+
+import com.pharmacie.config.DatabaseConfig;
+import com.pharmacie.models.Client;
 
 public class ClientDAO implements BaseDAO<Client> {
 
@@ -32,7 +32,6 @@ public class ClientDAO implements BaseDAO<Client> {
             }
         } catch (SQLException e) {
             System.err.println("[ClientDAO] Error finding client by id: " + e.getMessage());
-            e.printStackTrace();
         }
         return null;
     }
@@ -49,7 +48,7 @@ public class ClientDAO implements BaseDAO<Client> {
             }
         } catch (SQLException e) {
             System.err.println("[ClientDAO] Error finding all clients: " + e.getMessage());
-            e.printStackTrace();
+            throw new IllegalStateException("Impossible de charger les clients depuis la base.", e);
         }
         return clients;
     }
@@ -75,7 +74,6 @@ public class ClientDAO implements BaseDAO<Client> {
             }
         } catch (SQLException e) {
             System.err.println("[ClientDAO] Error inserting client: " + e.getMessage());
-            e.printStackTrace();
         }
         return false;
     }
@@ -95,7 +93,6 @@ public class ClientDAO implements BaseDAO<Client> {
             return rowsAffected > 0;
         } catch (SQLException e) {
             System.err.println("[ClientDAO] Error updating client: " + e.getMessage());
-            e.printStackTrace();
         }
         return false;
     }
@@ -110,18 +107,21 @@ public class ClientDAO implements BaseDAO<Client> {
             return rowsAffected > 0;
         } catch (SQLException e) {
             System.err.println("[ClientDAO] Error deleting client: " + e.getMessage());
-            e.printStackTrace();
         }
         return false;
     }
 
     public List<Client> searchByNom(String keyword) {
         List<Client> clients = new ArrayList<>();
-        String sql = "SELECT * FROM clients WHERE nom LIKE ? OR prenom LIKE ? ORDER BY nom ASC";
+        String sql = "SELECT * FROM clients WHERE nom ILIKE ? OR prenom ILIKE ? "
+                + "OR COALESCE(telephone, '') ILIKE ? OR COALESCE(email, '') ILIKE ? ORDER BY nom ASC";
         try (Connection connection = databaseConfig.getConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setString(1, "%" + keyword + "%");
-            statement.setString(2, "%" + keyword + "%");
+            String pattern = "%" + keyword.trim() + "%";
+            statement.setString(1, pattern);
+            statement.setString(2, pattern);
+            statement.setString(3, pattern);
+            statement.setString(4, pattern);
             try (ResultSet resultSet = statement.executeQuery()) {
                 while (resultSet.next()) {
                     clients.add(mapResultSetToClient(resultSet));
@@ -129,7 +129,7 @@ public class ClientDAO implements BaseDAO<Client> {
             }
         } catch (SQLException e) {
             System.err.println("[ClientDAO] Error searching clients by name: " + e.getMessage());
-            e.printStackTrace();
+            throw new IllegalStateException("Impossible de rechercher les clients dans la base.", e);
         }
         return clients;
     }

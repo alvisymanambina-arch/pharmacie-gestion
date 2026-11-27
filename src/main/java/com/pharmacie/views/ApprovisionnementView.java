@@ -10,6 +10,8 @@ import com.pharmacie.models.Medicament;
 import com.pharmacie.models.Utilisateur;
 import com.pharmacie.utils.DialogUtils;
 import com.pharmacie.utils.FormatUtils;
+import com.pharmacie.utils.TableUi;
+import com.pharmacie.utils.FormValidation;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
@@ -19,6 +21,7 @@ import java.time.LocalDateTime;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
 
 public class ApprovisionnementView extends JPanel {
 
@@ -41,6 +44,8 @@ public class ApprovisionnementView extends JPanel {
 
     private final List<ApprovisionnementDetail> commande;
     private final List<Integer> medicamentIds;
+    private int rechercheGeneration;
+    private boolean approvisionnementEnCours;
 
     public ApprovisionnementView(MainFrame mainFrame, Utilisateur utilisateur) {
       
@@ -70,7 +75,8 @@ public class ApprovisionnementView extends JPanel {
             public boolean isCellEditable(int row, int column) { return false; }
         };
         tblResultats = new JTable(modelResultats);
-        tblResultats.setRowHeight(25);
+        TableUi.apply(tblResultats);
+        tblResultats.setAutoCreateRowSorter(true);
 
         // Table de la commande
         modelCommande = new DefaultTableModel(
@@ -82,7 +88,7 @@ public class ApprovisionnementView extends JPanel {
             }
         };
         tblCommande = new JTable(modelCommande);
-        tblCommande.setRowHeight(28);
+        TableUi.apply(tblCommande);
     }
 
     private void setupLayout() {
@@ -203,37 +209,53 @@ public class ApprovisionnementView extends JPanel {
 
     private void loadFournisseurs() {
         cmbFournisseur.removeAllItems();
-        List<Fournisseur> fournisseurs = fournisseurDAO.findAll();
-        for (Fournisseur f : fournisseurs) {
-            cmbFournisseur.addItem(f);
-        }
-        if (cmbFournisseur.getItemCount() == 0) {
-            DialogUtils.showWarning("Aucun fournisseur enregistré. Veuillez en ajouter d'abord.");
-        }
+        new SwingWorker<List<Fournisseur>, Void>() {
+            @Override protected List<Fournisseur> doInBackground() { return fournisseurDAO.findAll(); }
+            @Override protected void done() {
+                try {
+                    List<Fournisseur> fournisseurs = get();
+                    for (Fournisseur f : fournisseurs) cmbFournisseur.addItem(f);
+                    if (fournisseurs.isEmpty()) {
+                        DialogUtils.showWarning("Aucun fournisseur enregistré. Veuillez en ajouter d'abord.");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } catch (ExecutionException e) {
+                    DialogUtils.showErrorMessage(e, "Erreur de chargement des fournisseurs");
+                }
+            }
+        }.execute();
     }
 
     private void rechercherMedicaments() {
         String keyword = txtRecherche.getText().trim();
-        List<Medicament> medicaments;
-        if (keyword.isEmpty()) {
-            medicaments = medicamentDAO.findAll();
-        } else {
-            medicaments = medicamentDAO.searchByNom(keyword);
-        }
-
-        modelResultats.setRowCount(0);
-        for (Medicament m : medicaments) {
-            modelResultats.addRow(new Object[]{
-                    m.getId(), m.getNom(), m.getQuantiteStock(),
-                    FormatUtils.formatCurrency(m.getPrixAchat()),
-                    m.getCategorieNom() != null ? m.getCategorieNom() : ""
-            });
-        }
+        int generation = ++rechercheGeneration;
+        new SwingWorker<List<Medicament>, Void>() {
+            @Override protected List<Medicament> doInBackground() {
+                return keyword.isEmpty() ? List.of() : medicamentDAO.searchByNom(keyword);
+            }
+            @Override protected void done() {
+                if (generation != rechercheGeneration) return;
+                try {
+                    modelResultats.setRowCount(0);
+                    for (Medicament m : get()) modelResultats.addRow(new Object[]{
+                            m.getId(), m.getNom(), m.getQuantiteStock(),
+                            FormatUtils.formatCurrency(m.getPrixAchat()),
+                            m.getCategorieNom() != null ? m.getCategorieNom() : ""
+                    });
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } catch (ExecutionException e) {
+                    DialogUtils.showErrorMessage(e, "Erreur de recherche des médicaments");
+                }
+            }
+        }.execute();
     }
 
     private void ajouterACommande() {
-        int selectedRow = tblResultats.getSelectedRow();
-        if (selectedRow < 0) return;
+        int selectedViewRow = tblResultats.getSelectedRow();
+        if (selectedViewRow < 0) return;
+        int selectedRow = tblResultats.convertRowIndexToModel(selectedViewRow);
 
         int medicamentId = (int) modelResultats.getValueAt(selectedRow, 0);
         String nom = (String) modelResultats.getValueAt(selectedRow, 1);
@@ -265,13 +287,13 @@ public class ApprovisionnementView extends JPanel {
             Object val = modelCommande.getValueAt(row, 3);
             if (val instanceof Number) qty = ((Number) val).intValue();
             else qty = Integer.parseInt(val.toString());
-        } catch (NumberFormatException ignored) {}
-        if (qty <= 0) qty = 1;
+        } catch (RuntimeException ignored) { return; }
+        if (qty <= 0) return;
 
         BigDecimal prixAchat = FormatUtils.parseCurrency(
             modelCommande.getValueAt(row, 4).toString());
         BigDecimal sousTotal = prixAchat.multiply(BigDecimal.valueOf(qty));
-        modelCommande.setValueAt(FormatUtils.formatCurrency(sousTotal), row, 3);
+        modelCommande.setValueAt(FormatUtils.formatCurrency(sousTotal), row, 5);
 
         if (row < commande.size()) {
             ApprovisionnementDetail d = commande.get(row);
@@ -317,41 +339,75 @@ public class ApprovisionnementView extends JPanel {
     }
 
     private void enregistrer() {
+        if (approvisionnementEnCours) return;
         Fournisseur selectedFournisseur = (Fournisseur) cmbFournisseur.getSelectedItem();
         if (selectedFournisseur == null || selectedFournisseur.getId() == 0) {
-            DialogUtils.showWarning("Veuillez sélectionner un fournisseur.");
+            FormValidation.invalid(cmbFournisseur, "Veuillez sélectionner un fournisseur.");
             return;
         }
         if (commande.isEmpty()) {
             DialogUtils.showWarning("La commande est vide !");
             return;
         }
-        if (!DialogUtils.showConfirmation("Confirmer l'approvisionnement ?")) {
-            return;
-        }
-
-        // Recalculer les détails
+        // Validate every editable lot field before accepting the order.
         for (int i = 0; i < commande.size(); i++) {
-            BigDecimal prixAchat = FormatUtils.parseCurrency(
-                    modelCommande.getValueAt(i, 4).toString());
-            int qty = 1;
+            String numeroLot = String.valueOf(modelCommande.getValueAt(i, 1)).trim();
+            if (numeroLot.isEmpty() || numeroLot.length() > 80) {
+                validationErreurCellule(i, 1, "La ligne " + (i + 1)
+                        + " doit avoir un numéro de lot (80 caractères maximum).");
+                return;
+            }
+
+            int qty;
             try {
                 Object val = modelCommande.getValueAt(i, 3);
                 if (val instanceof Number number) qty = number.intValue();
-                else qty = Integer.parseInt(val.toString());
-            } catch (NumberFormatException ignored) {}
+                else if (val != null && val.toString().trim().matches("\\d+")) {
+                    qty = Integer.parseInt(val.toString().trim());
+                } else throw new NumberFormatException();
+                if (qty <= 0) throw new NumberFormatException();
+            } catch (NumberFormatException ex) {
+                validationErreurCellule(i, 3, "La quantité de la ligne " + (i + 1)
+                        + " doit être un entier supérieur à zéro.");
+                return;
+            }
+
+            BigDecimal prixAchat;
+            try {
+                prixAchat = parseStrictPrice(modelCommande.getValueAt(i, 4));
+                if (prixAchat.signum() < 0) throw new NumberFormatException();
+            } catch (NumberFormatException ex) {
+                validationErreurCellule(i, 4, "Le prix d'achat de la ligne " + (i + 1)
+                        + " doit être un montant nul ou positif valide.");
+                return;
+            }
+
+            String expiration = String.valueOf(modelCommande.getValueAt(i, 2)).trim();
+            try {
+                if (expiration.isBlank()) throw new java.time.DateTimeException("date manquante");
+                LocalDate dateExpiration = LocalDate.parse(expiration);
+                if (dateExpiration.isBefore(LocalDate.now())) {
+                    throw new java.time.DateTimeException("date déjà dépassée");
+                }
+            } catch (RuntimeException ex) {
+                validationErreurCellule(i, 2, "La date d'expiration de la ligne " + (i + 1)
+                        + " doit être aujourd'hui ou une date future (AAAA-MM-JJ).");
+                return;
+            }
+        }
+
+        if (!DialogUtils.showConfirmation("Confirmer l'approvisionnement ?")) return;
+
+        // Rebuild the details from the now-validated table values.
+        for (int i = 0; i < commande.size(); i++) {
+            int qty = Integer.parseInt(String.valueOf(modelCommande.getValueAt(i, 3)));
+            BigDecimal prixAchat = parseStrictPrice(modelCommande.getValueAt(i, 4));
             commande.get(i).setQuantite(qty);
             commande.get(i).setPrixAchat(prixAchat);
             commande.get(i).setSousTotal(prixAchat.multiply(BigDecimal.valueOf(qty)));
             commande.get(i).setNumeroLot(String.valueOf(modelCommande.getValueAt(i, 1)).trim());
-            String expiration = String.valueOf(modelCommande.getValueAt(i, 2)).trim();
-            try {
-                commande.get(i).setDateExpiration(expiration.isBlank() ? null : LocalDate.parse(expiration));
-            } catch (RuntimeException ex) {
-                DialogUtils.showWarning("Date d'expiration invalide pour la ligne " + (i + 1)
-                        + ". Format attendu : AAAA-MM-JJ.");
-                return;
-            }
+            commande.get(i).setDateExpiration(LocalDate.parse(
+                    String.valueOf(modelCommande.getValueAt(i, 2)).trim()));
         }
 
         BigDecimal total = BigDecimal.ZERO;
@@ -366,6 +422,7 @@ public class ApprovisionnementView extends JPanel {
             appro.addDetail(d);
         }
 
+        approvisionnementEnCours = true;
         SwingWorker<Boolean, Void> worker = new SwingWorker<>() {
             @Override
             protected Boolean doInBackground() {
@@ -388,9 +445,29 @@ public class ApprovisionnementView extends JPanel {
                     }
                 } catch (Exception e) {
                     DialogUtils.showErrorMessage(e, "Erreur");
+                } finally {
+                    approvisionnementEnCours = false;
                 }
             }
         };
         worker.execute();
+    }
+
+    private BigDecimal parseStrictPrice(Object value) {
+        String normalized = String.valueOf(value).trim()
+                .replace("Ar", "").replace("\u00A0", "").replace(" ", "")
+                .replace(',', '.');
+        if (!normalized.matches("\\d+(\\.\\d{1,2})?")) throw new NumberFormatException();
+        BigDecimal price = new BigDecimal(normalized);
+        if (price.precision() - price.scale() > 8) throw new NumberFormatException();
+        return price.setScale(2, java.math.RoundingMode.HALF_UP);
+    }
+
+    private void validationErreurCellule(int row, int column, String message) {
+        tblCommande.changeSelection(row, column, false, false);
+        tblCommande.scrollRectToVisible(tblCommande.getCellRect(row, column, true));
+        DialogUtils.showWarning(message);
+        tblCommande.editCellAt(row, column);
+        tblCommande.requestFocusInWindow();
     }
 }

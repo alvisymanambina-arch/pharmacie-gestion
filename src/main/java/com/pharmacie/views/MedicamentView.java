@@ -13,6 +13,7 @@ import java.math.BigDecimal;
 import java.text.SimpleDateFormat;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicLong;
 
 import javax.swing.BorderFactory;
 import javax.swing.Box;
@@ -38,6 +39,8 @@ import com.pharmacie.models.Medicament;
 import com.pharmacie.utils.DateUtils;
 import com.pharmacie.utils.DialogUtils;
 import com.pharmacie.utils.FormatUtils;
+import com.pharmacie.utils.TableUi;
+import com.pharmacie.utils.FormValidation;
 
 public class MedicamentView extends JPanel {
 
@@ -48,6 +51,8 @@ public class MedicamentView extends JPanel {
     private JComboBox<Categorie> cmbCategorie;
     private JTable tblMedicaments;
     private DefaultTableModel model;
+    private final AtomicLong tableRequest = new AtomicLong();
+    private boolean loadingCategories;
 
     public MedicamentView(MainFrame mainFrame) {
         this.medicamentDAO = new MedicamentDAO();
@@ -71,7 +76,8 @@ public class MedicamentView extends JPanel {
             public boolean isCellEditable(int row, int column) { return false; }
         };
         tblMedicaments = new JTable(model);
-        tblMedicaments.setRowHeight(26);
+        TableUi.apply(tblMedicaments);
+        tblMedicaments.setAutoCreateRowSorter(true);
         tblMedicaments.getColumnModel().getColumn(0).setMaxWidth(50);
         tblMedicaments.getColumnModel().getColumn(11).setMinWidth(0);
         tblMedicaments.getColumnModel().getColumn(11).setMaxWidth(0);
@@ -127,7 +133,9 @@ public class MedicamentView extends JPanel {
             cmbCategorie.setSelectedIndex(0);
             loadData();
         });
-        cmbCategorie.addActionListener(e -> filtrerParCategorie());
+        cmbCategorie.addActionListener(e -> {
+            if (!loadingCategories) filtrerParCategorie();
+        });
         btnAjouter.addActionListener(e -> ouvrirDialogAjout());
         btnModifier.addActionListener(e -> ouvrirDialogModification());
         btnSupprimer.addActionListener(e -> supprimer());
@@ -145,15 +153,34 @@ public class MedicamentView extends JPanel {
     }
 
     private void loadCategories() {
-        cmbCategorie.removeAllItems();
-        cmbCategorie.addItem(new Categorie(0, "Toutes les catégories", null));
-        List<Categorie> categories = categorieDAO.findAll();
-        for (Categorie c : categories) {
-            cmbCategorie.addItem(c);
-        }
+        loadingCategories = true;
+        cmbCategorie.setEnabled(false);
+        new SwingWorker<List<Categorie>, Void>() {
+            @Override
+            protected List<Categorie> doInBackground() {
+                return categorieDAO.findAll();
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    cmbCategorie.removeAllItems();
+                    cmbCategorie.addItem(new Categorie(0, "Toutes les catégories", null));
+                    for (Categorie categorie : get()) cmbCategorie.addItem(categorie);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } catch (ExecutionException e) {
+                    DialogUtils.showErrorMessage(e, "Erreur de chargement des catégories");
+                } finally {
+                    loadingCategories = false;
+                    cmbCategorie.setEnabled(true);
+                }
+            }
+        }.execute();
     }
 
     private void loadData() {
+        long requestId = tableRequest.incrementAndGet();
         SwingWorker<List<Medicament>, Void> worker = new SwingWorker<>() {
             @Override
             protected List<Medicament> doInBackground() {
@@ -162,6 +189,7 @@ public class MedicamentView extends JPanel {
 
             @Override
             protected void done() {
+                if (requestId != tableRequest.get()) return;
                 try {
                     afficherMedicaments(get());
                 } catch (InterruptedException| ExecutionException e) {
@@ -174,6 +202,7 @@ public class MedicamentView extends JPanel {
 
     private void rechercher() {
         String keyword = txtRecherche.getText().trim();
+        long requestId = tableRequest.incrementAndGet();
         SwingWorker<List<Medicament>, Void> worker = new SwingWorker<>() {
             @Override
             protected List<Medicament> doInBackground() {
@@ -182,6 +211,7 @@ public class MedicamentView extends JPanel {
 
             @Override
             protected void done() {
+                if (requestId != tableRequest.get()) return;
                 try {
                     afficherMedicaments(get());
                 } catch (InterruptedException | ExecutionException e) {
@@ -198,6 +228,7 @@ public class MedicamentView extends JPanel {
             loadData();
             return;
         }
+        long requestId = tableRequest.incrementAndGet();
         SwingWorker<List<Medicament>, Void> worker = new SwingWorker<>() {
             @Override
             protected List<Medicament> doInBackground() {
@@ -206,6 +237,7 @@ public class MedicamentView extends JPanel {
 
             @Override
             protected void done() {
+                if (requestId != tableRequest.get()) return;
                 try {
                     afficherMedicaments(get());
                 } catch (InterruptedException | ExecutionException e) {
@@ -252,19 +284,34 @@ public class MedicamentView extends JPanel {
             DialogUtils.showWarning("Veuillez sélectionner un médicament à modifier.");
             return;
         }
+        row = tblMedicaments.convertRowIndexToModel(row);
         int id = (int) model.getValueAt(row, 11);
-        Medicament m = medicamentDAO.findById(id);
-        if (m == null) {
-            DialogUtils.showError("Médicament introuvable.");
-            return;
-        }
-        MedicamentDialog dialog = new MedicamentDialog(
-                (Frame) SwingUtilities.getWindowAncestor(this),
-                "Modifier le médicament", m, categorieDAO);
-        dialog.setVisible(true);
-        if (dialog.isConfirmed()) {
-            loadData();
-        }
+        new SwingWorker<Medicament, Void>() {
+            @Override
+            protected Medicament doInBackground() {
+                return medicamentDAO.findById(id);
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    Medicament medicament = get();
+                    if (medicament == null) {
+                        DialogUtils.showError("Médicament introuvable.");
+                        return;
+                    }
+                    MedicamentDialog dialog = new MedicamentDialog(
+                            (Frame) SwingUtilities.getWindowAncestor(MedicamentView.this),
+                            "Modifier le médicament", medicament, categorieDAO);
+                    dialog.setVisible(true);
+                    if (dialog.isConfirmed()) loadData();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } catch (ExecutionException e) {
+                    DialogUtils.showErrorMessage(e, "Erreur de chargement du médicament");
+                }
+            }
+        }.execute();
     }
 
     private void supprimer() {
@@ -273,6 +320,7 @@ public class MedicamentView extends JPanel {
             DialogUtils.showWarning("Veuillez sélectionner un médicament à supprimer.");
             return;
         }
+        row = tblMedicaments.convertRowIndexToModel(row);
         int id = (int) model.getValueAt(row, 11);
         String nom = (String) model.getValueAt(row, 1);
         if (DialogUtils.showConfirmation(
@@ -313,6 +361,7 @@ public class MedicamentView extends JPanel {
         private boolean confirmed = false;
 
         private int editingId = 0;
+        private int initialCategoryId;
 
         private JTextField txtNom;
         private JTextField txtDosage;
@@ -325,6 +374,7 @@ public class MedicamentView extends JPanel {
         private JTextField txtSeuil;
         private JFormattedTextField txtExpiration;
         private JTextField txtCodeBarre;
+        private JButton btnOK;
 
         public MedicamentDialog(Frame parent, String title, Medicament med, CategorieDAO catDAO) {
             super(parent, title, true);
@@ -346,12 +396,15 @@ public class MedicamentView extends JPanel {
             txtPrixAchat = new JTextField(10);
             txtPrixVente = new JTextField(10);
             txtStock = new JTextField(10);
+            txtStock.setEditable(false);
+            txtStock.setText("0");
             txtSeuil = new JTextField(10);
             txtCodeBarre = new JTextField(20);
 
             SimpleDateFormat sdf = new SimpleDateFormat("dd/MM/yyyy");
             txtExpiration = new JFormattedTextField(sdf);
             txtExpiration.setColumns(10);
+            txtExpiration.setEditable(false);
         }
 
         private void setupLayout() {
@@ -370,16 +423,16 @@ public class MedicamentView extends JPanel {
             addRow(panel, gbc, "Catégorie * :", cmbCategorie, y++);
             addRow(panel, gbc, "Prix d'achat (Ar) * :", txtPrixAchat, y++);
             addRow(panel, gbc, "Prix de vente (Ar) * :", txtPrixVente, y++);
-            addRow(panel, gbc, "Quantité en stock * :", txtStock, y++);
+            addRow(panel, gbc, "Stock (géré par approvisionnement) :", txtStock, y++);
             addRow(panel, gbc, "Seuil d'alerte :", txtSeuil, y++);
-            addRow(panel, gbc, "Date d'expiration :", txtExpiration, y++);
+            addRow(panel, gbc, "Prochaine expiration (par lot) :", txtExpiration, y++);
             addRow(panel, gbc, "Code-barres :", txtCodeBarre, y++);
 
             // Boutons
             gbc.gridx = 0; gbc.gridy = y; gbc.gridwidth = 2;
             gbc.anchor = GridBagConstraints.CENTER;
             JPanel panelBtn = new JPanel(new FlowLayout(FlowLayout.CENTER, 20, 5));
-            JButton btnOK = new JButton("Enregistrer");
+            btnOK = new JButton("Enregistrer");
             btnOK.setBackground(new Color(76, 175, 80));
             btnOK.setForeground(Color.WHITE);
             JButton btnCancel = new JButton("Annuler");
@@ -401,14 +454,40 @@ public class MedicamentView extends JPanel {
         }
 
         private void loadCategories() {
-            cmbCategorie.removeAllItems();
-            for (Categorie c : categorieDAO.findAll()) {
-                cmbCategorie.addItem(c);
-            }
+            cmbCategorie.setEnabled(false);
+            btnOK.setEnabled(false);
+            new SwingWorker<List<Categorie>, Void>() {
+                @Override
+                protected List<Categorie> doInBackground() {
+                    return categorieDAO.findAll();
+                }
+
+                @Override
+                protected void done() {
+                    try {
+                        cmbCategorie.removeAllItems();
+                        for (Categorie categorie : get()) cmbCategorie.addItem(categorie);
+                        for (int i = 0; i < cmbCategorie.getItemCount(); i++) {
+                            if (cmbCategorie.getItemAt(i).getId() == initialCategoryId) {
+                                cmbCategorie.setSelectedIndex(i);
+                                break;
+                            }
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    } catch (ExecutionException e) {
+                        DialogUtils.showErrorMessage(e, "Erreur de chargement des catégories");
+                    } finally {
+                        cmbCategorie.setEnabled(true);
+                        btnOK.setEnabled(true);
+                    }
+                }
+            }.execute();
         }
 
         private void fillFields(Medicament m) {
             this.editingId = m.getId();
+            this.initialCategoryId = m.getCategorieId();
             txtNom.setText(m.getNom());
             txtDosage.setText(m.getDosage());
             txtForme.setText(m.getForme());
@@ -421,13 +500,6 @@ public class MedicamentView extends JPanel {
                 txtExpiration.setValue(java.sql.Date.valueOf(m.getDateExpiration()));
             }
             txtCodeBarre.setText(m.getCodeBarre());
-            // Sélectionner la catégorie
-            for (int i = 0; i < cmbCategorie.getItemCount(); i++) {
-                if (cmbCategorie.getItemAt(i).getId() == m.getCategorieId()) {
-                    cmbCategorie.setSelectedIndex(i);
-                    break;
-                }
-            }
         }
 
         private void onOK() {
@@ -440,55 +512,105 @@ public class MedicamentView extends JPanel {
             m.setDescription(txtDescription.getText().trim());
             Categorie cat = (Categorie) cmbCategorie.getSelectedItem();
             m.setCategorieId(cat != null ? cat.getId() : 0);
-            m.setPrixAchat(FormatUtils.parseCurrency(txtPrixAchat.getText()));
-            m.setPrixVente(FormatUtils.parseCurrency(txtPrixVente.getText()));
-            m.setQuantiteStock(FormatUtils.parseInteger(txtStock.getText()));
+            m.setPrixAchat(parsePriceField(txtPrixAchat.getText()));
+            m.setPrixVente(parsePriceField(txtPrixVente.getText()));
             m.setSeuilAlerte(FormatUtils.parseInteger(txtSeuil.getText()));
-            m.setDateExpiration(DateUtils.parseDate(txtExpiration.getText()));
             m.setCodeBarre(txtCodeBarre.getText().trim().isEmpty() ? null
                     : txtCodeBarre.getText().trim());
 
-            boolean success;
             if (editingId > 0) {
                 m.setId(editingId);
-                success = medicamentDAO.update(m);
-            } else {
-                success = medicamentDAO.insert(m);
             }
+            btnOK.setEnabled(false);
+            new SwingWorker<Boolean, Void>() {
+                @Override
+                protected Boolean doInBackground() {
+                    return editingId > 0 ? medicamentDAO.update(m) : medicamentDAO.insert(m);
+                }
 
-            if (success) {
-                confirmed = true;
-                dispose();
-            } else {
-                DialogUtils.showError("Erreur lors de l'enregistrement.");
-            }
+                @Override
+                protected void done() {
+                    btnOK.setEnabled(true);
+                    try {
+                        if (get()) {
+                            confirmed = true;
+                            dispose();
+                        } else {
+                            DialogUtils.showError("Erreur lors de l'enregistrement.");
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        DialogUtils.showError("Enregistrement interrompu.");
+                    } catch (ExecutionException e) {
+                        DialogUtils.showErrorMessage(e, "Erreur lors de l'enregistrement");
+                    }
+                }
+            }.execute();
         }
 
         private boolean validateFields() {
+            FormValidation.clear(txtNom, txtDosage, txtForme, cmbCategorie,
+                    txtPrixAchat, txtPrixVente, txtSeuil, txtCodeBarre);
             if (txtNom.getText().trim().isEmpty()) {
-                DialogUtils.showWarning("Le nom est obligatoire.");
-                txtNom.requestFocus();
+                FormValidation.invalid(txtNom, "Le nom est obligatoire.");
                 return false;
             }
-            if (cmbCategorie.getSelectedItem() == null) {
-                DialogUtils.showWarning("Veuillez sélectionner une catégorie.");
+            if (txtNom.getText().trim().length() > 200) {
+                FormValidation.invalid(txtNom, "Le nom ne peut pas dépasser 200 caractères.");
+                return false;
+            }
+            if (txtDosage.getText().trim().length() > 100) {
+                FormValidation.invalid(txtDosage, "Le dosage ne peut pas dépasser 100 caractères.");
+                return false;
+            }
+            if (txtForme.getText().trim().length() > 100) {
+                FormValidation.invalid(txtForme, "La forme ne peut pas dépasser 100 caractères.");
+                return false;
+            }
+            Categorie categorie = (Categorie) cmbCategorie.getSelectedItem();
+            if (categorie == null || categorie.getId() <= 0) {
+                FormValidation.invalid(cmbCategorie, "Veuillez sélectionner une catégorie valide.");
                 return false;
             }
             try {
-                BigDecimal prixAchat = new BigDecimal(txtPrixAchat.getText().trim());
-                if (prixAchat.signum() < 0) throw new NumberFormatException();
+                if (parsePriceField(txtPrixAchat.getText()).signum() < 0) throw new NumberFormatException();
             } catch (NumberFormatException e) {
-                DialogUtils.showWarning("Prix d'achat invalide.");
+                FormValidation.invalid(txtPrixAchat, "Le prix d'achat doit être un montant nul ou positif (maximum 8 chiffres avant la virgule).");
                 return false;
             }
             try {
-                BigDecimal prixVente = new BigDecimal(txtPrixVente.getText().trim());
-                if (prixVente.signum() < 0) throw new NumberFormatException();
+                if (parsePriceField(txtPrixVente.getText()).signum() <= 0) throw new NumberFormatException();
             } catch (NumberFormatException e) {
-                DialogUtils.showWarning("Prix de vente invalide.");
+                FormValidation.invalid(txtPrixVente, "Le prix de vente doit être un montant positif (maximum 8 chiffres avant la virgule).");
+                return false;
+            }
+            String seuil = txtSeuil.getText().trim();
+            try {
+                if (!seuil.matches("\\d+") || Integer.parseInt(seuil) < 0) throw new NumberFormatException();
+            } catch (NumberFormatException e) {
+                FormValidation.invalid(txtSeuil, "Le seuil doit être un entier positif ou nul.");
+                return false;
+            }
+            if (txtCodeBarre.getText().trim().length() > 50) {
+                FormValidation.invalid(txtCodeBarre, "Le code-barres ne peut pas dépasser 50 caractères.");
                 return false;
             }
             return true;
+        }
+
+        private BigDecimal parsePriceField(String value) {
+            String normalized = value == null ? "" : value.trim()
+                    .replace("\u00A0", "")
+                    .replace(" ", "")
+                    .replace(',', '.');
+            if (!normalized.matches("\\d+(\\.\\d{1,2})?")) {
+                throw new NumberFormatException("Montant invalide");
+            }
+            BigDecimal amount = new BigDecimal(normalized);
+            if (amount.precision() - amount.scale() > 8) {
+                throw new NumberFormatException("Montant trop élevé");
+            }
+            return amount.setScale(2, java.math.RoundingMode.HALF_UP);
         }
 
         public boolean isConfirmed() {

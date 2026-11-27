@@ -27,6 +27,8 @@ import javax.swing.table.DefaultTableModel;
 import com.pharmacie.dao.CategorieDAO;
 import com.pharmacie.models.Categorie;
 import com.pharmacie.utils.DialogUtils;
+import com.pharmacie.utils.TableUi;
+import com.pharmacie.utils.FormValidation;
 
 public class CategorieView extends JPanel {
 
@@ -53,7 +55,9 @@ public class CategorieView extends JPanel {
             public boolean isCellEditable(int row, int column) { return false; }
         };
         tblCategories = new JTable(model);
-        tblCategories.setRowHeight(26);
+        TableUi.apply(tblCategories);
+        tblCategories.setAutoCreateRowSorter(true);
+        tblCategories.setAutoCreateRowSorter(true);
         tblCategories.getColumnModel().getColumn(0).setMaxWidth(50);
     }
 
@@ -129,11 +133,12 @@ public class CategorieView extends JPanel {
             DialogUtils.showWarning("Veuillez sélectionner une catégorie.");
             return;
         }
+        row = tblCategories.convertRowIndexToModel(row);
         int id = (int) model.getValueAt(row, 0);
-        Categorie c = categorieDAO.findById(id);
-        if (c != null) {
-            ouvrirDialog(c);
-        }
+        Categorie c = new Categorie(id,
+                String.valueOf(model.getValueAt(row, 1)),
+                String.valueOf(model.getValueAt(row, 2)));
+        ouvrirDialog(c);
     }
 
     private void supprimer() {
@@ -142,6 +147,7 @@ public class CategorieView extends JPanel {
             DialogUtils.showWarning("Veuillez sélectionner une catégorie.");
             return;
         }
+        row = tblCategories.convertRowIndexToModel(row);
         int id = (int) model.getValueAt(row, 0);
         String nom = (String) model.getValueAt(row, 1);
         if (DialogUtils.showConfirmation(
@@ -185,6 +191,7 @@ public class CategorieView extends JPanel {
 
         private boolean confirmed = false;
         private int editingId = 0;
+        private JButton btnOK;
         private JTextField txtNom;
         private JTextArea txtDescription;
 
@@ -232,7 +239,7 @@ public class CategorieView extends JPanel {
             gbc.fill = GridBagConstraints.HORIZONTAL;
             gbc.anchor = GridBagConstraints.CENTER;
             JPanel panelBtn = new JPanel(new FlowLayout(FlowLayout.CENTER, 20, 5));
-            JButton btnOK = new JButton("Enregistrer");
+            btnOK = new JButton("Enregistrer");
             btnOK.setBackground(new Color(76, 175, 80));
             btnOK.setForeground(Color.WHITE);
             JButton btnCancel = new JButton("Annuler");
@@ -246,28 +253,40 @@ public class CategorieView extends JPanel {
         }
 
         private void onOK() {
+            FormValidation.clear(txtNom);
             if (txtNom.getText().trim().isEmpty()) {
-                DialogUtils.showWarning("Le nom est obligatoire.");
+                FormValidation.invalid(txtNom, "Le nom est obligatoire.");
+                return;
+            }
+            if (txtNom.getText().trim().length() > 100) {
+                FormValidation.invalid(txtNom, "Le nom ne peut pas dépasser 100 caractères.");
                 return;
             }
             Categorie c = new Categorie();
             c.setNom(txtNom.getText().trim());
             c.setDescription(txtDescription.getText().trim());
 
-            boolean success;
             if (editingId > 0) {
                 c.setId(editingId);
-                success = categorieDAO.update(c);
-            } else {
-                success = categorieDAO.insert(c);
             }
-
-            if (success) {
-                confirmed = true;
-                dispose();
-            } else {
-                DialogUtils.showError("Erreur lors de l'enregistrement.");
-            }
+            btnOK.setEnabled(false);
+            new SwingWorker<Boolean, Void>() {
+                @Override protected Boolean doInBackground() {
+                    return editingId > 0 ? categorieDAO.update(c) : categorieDAO.insert(c);
+                }
+                @Override protected void done() {
+                    btnOK.setEnabled(true);
+                    try {
+                        if (get()) { confirmed = true; dispose(); }
+                        else DialogUtils.showError("Erreur lors de l'enregistrement.");
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        DialogUtils.showError("Enregistrement interrompu.");
+                    } catch (ExecutionException e) {
+                        DialogUtils.showErrorMessage(e, "Erreur lors de l'enregistrement");
+                    }
+                }
+            }.execute();
         }
 
         public boolean isConfirmed() { return confirmed; }

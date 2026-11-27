@@ -1,8 +1,5 @@
 package com.pharmacie.dao;
 
-import com.pharmacie.config.DatabaseConfig;
-import com.pharmacie.models.Fournisseur;
-
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -10,6 +7,9 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+
+import com.pharmacie.config.DatabaseConfig;
+import com.pharmacie.models.Fournisseur;
 
 public class FournisseurDAO implements BaseDAO<Fournisseur> {
 
@@ -32,7 +32,6 @@ public class FournisseurDAO implements BaseDAO<Fournisseur> {
             }
         } catch (SQLException e) {
             System.err.println("[FournisseurDAO] Error finding fournisseur by id: " + e.getMessage());
-            e.printStackTrace();
         }
         return null;
     }
@@ -49,7 +48,7 @@ public class FournisseurDAO implements BaseDAO<Fournisseur> {
             }
         } catch (SQLException e) {
             System.err.println("[FournisseurDAO] Error finding all fournisseurs: " + e.getMessage());
-            e.printStackTrace();
+            throw new IllegalStateException("Impossible de charger les fournisseurs depuis la base.", e);
         }
         return fournisseurs;
     }
@@ -76,7 +75,6 @@ public class FournisseurDAO implements BaseDAO<Fournisseur> {
             }
         } catch (SQLException e) {
             System.err.println("[FournisseurDAO] Error inserting fournisseur: " + e.getMessage());
-            e.printStackTrace();
         }
         return false;
     }
@@ -97,7 +95,6 @@ public class FournisseurDAO implements BaseDAO<Fournisseur> {
             return rowsAffected > 0;
         } catch (SQLException e) {
             System.err.println("[FournisseurDAO] Error updating fournisseur: " + e.getMessage());
-            e.printStackTrace();
         }
         return false;
     }
@@ -112,17 +109,21 @@ public class FournisseurDAO implements BaseDAO<Fournisseur> {
             return rowsAffected > 0;
         } catch (SQLException e) {
             System.err.println("[FournisseurDAO] Error deleting fournisseur: " + e.getMessage());
-            e.printStackTrace();
         }
         return false;
     }
 
     public List<Fournisseur> searchByNom(String keyword) {
         List<Fournisseur> fournisseurs = new ArrayList<>();
-        String sql = "SELECT * FROM fournisseurs WHERE nom LIKE ? ORDER BY nom ASC";
+        String sql = "SELECT * FROM fournisseurs WHERE nom ILIKE ? "
+                + "OR COALESCE(telephone, '') ILIKE ? OR COALESCE(email, '') ILIKE ? "
+                + "OR COALESCE(contact_person, '') ILIKE ? ORDER BY nom ASC";
         try (Connection connection = databaseConfig.getConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setString(1, "%" + keyword + "%");
+            String pattern = "%" + keyword.trim() + "%";
+            for (int i = 1; i <= 4; i++) {
+                statement.setString(i, pattern);
+            }
             try (ResultSet resultSet = statement.executeQuery()) {
                 while (resultSet.next()) {
                     fournisseurs.add(mapResultSetToFournisseur(resultSet));
@@ -130,7 +131,7 @@ public class FournisseurDAO implements BaseDAO<Fournisseur> {
             }
         } catch (SQLException e) {
             System.err.println("[FournisseurDAO] Error searching fournisseurs by name: " + e.getMessage());
-            e.printStackTrace();
+            throw new IllegalStateException("Impossible de rechercher les fournisseurs dans la base.", e);
         }
         return fournisseurs;
     }

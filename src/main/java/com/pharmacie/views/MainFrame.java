@@ -1,20 +1,35 @@
 package com.pharmacie.views;
 
+import java.awt.BorderLayout;
+import java.awt.Dimension;
+import java.awt.FlowLayout;
+import java.awt.Window;
+import java.awt.event.ActionEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+
+import javax.swing.BorderFactory;
+import javax.swing.JButton;
+import javax.swing.JFrame;
+import javax.swing.JLabel;
+import javax.swing.JMenu;
+import javax.swing.JMenuBar;
+import javax.swing.JMenuItem;
+import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.SwingUtilities;
+import javax.swing.Timer;
+
 import com.formdev.flatlaf.FlatDarkLaf;
 import com.formdev.flatlaf.FlatLightLaf;
 import com.pharmacie.config.AppConstants;
 import com.pharmacie.models.Utilisateur;
 import com.pharmacie.utils.DialogUtils;
 
-import javax.swing.*;
-import java.awt.*;
-import java.awt.event.ActionEvent;
-import java.awt.event.WindowAdapter;
-import java.awt.event.WindowEvent;
-
 public class MainFrame extends JFrame {
 
-    private Utilisateur utilisateur;
+    private final Utilisateur utilisateur;
     private JPanel contentPanel;
     private JLabel lblUser;
     private JLabel lblDate;
@@ -260,14 +275,15 @@ public class MainFrame extends JFrame {
     }
 
     private void handleAPropos() {
-        String message = String.format(
-                "%s v%s\n\n"
-                + "Application de gestion de pharmacie\n"
-                + "Développée en Java avec Swing + FlatLaf\n"
-                + "Base de données : PostgreSQL / Supabase\n\n"
-                + "© 2024 PharmaGestion",
-                AppConstants.APP_NAME, AppConstants.APP_VERSION
-        );
+        String message = String.format("""
+                %s v%s
+
+                Application de gestion de pharmacie
+                Développée en Java avec Swing + FlatLaf
+                Base de données : PostgreSQL / Supabase
+
+                © 2026 PharmaGestion""",
+                AppConstants.APP_NAME, AppConstants.APP_VERSION);
         JOptionPane.showMessageDialog(this, message,
                 "À propos", JOptionPane.INFORMATION_MESSAGE);
     }
